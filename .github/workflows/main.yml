@@ -4,18 +4,21 @@ on:
   push:
     branches: master
 
+permissions:
+  contents: write
+
 env:
   BUILD_OUTPUT: 'build/Build/Products/Debug'
 
 jobs:
 
   build:
-    
+
     runs-on: macos-latest
 
     steps:
 
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
       with:
         fetch-depth: '5'
 
@@ -23,15 +26,9 @@ jobs:
       run: |
         git fetch --prune --unshallow --tags
         GIT_SHA="$(git rev-parse --short HEAD)"
-        CUR_TAG="$(git tag -l | grep 'alpha\|beta' | tail -1)"
         eval $(grep -m 1 "MODULE_VERSION =" itlwm.xcodeproj/project.pbxproj | tr -d ';' | tr -d '\t' | tr -d " ")
         echo "SHORT_SHA=$GIT_SHA" >> $GITHUB_ENV
         echo "ITLWM_VER=$MODULE_VERSION" >> $GITHUB_ENV
-        if [[ -z $CUR_TAG ]]; then
-          echo "OLD_PRE_TAG=NULL" >> $GITHUB_ENV
-        else
-          echo "OLD_PRE_TAG=$CUR_TAG" >> $GITHUB_ENV
-        fi
 
     - name: Install MacKernelSDK
       run: |
@@ -70,18 +67,13 @@ jobs:
         echo '### The latest five updates are:' >> ReleaseNotes.md
         git log -"5" --format="- %H %s" | sed '/^$/d' >> ReleaseNotes.md
 
-    - name: Delete Old Prerelease
-      uses: dev-drprasad/delete-tag-and-release@v0.2.1
-      with:
-        tag_name: ${{ env.OLD_PRE_TAG }}
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
     - name: Publish GitHub Release
       if: contains(github.event.head_commit.message, 'Bump version') == false
-      uses: ncipollo/release-action@v1.12.0
+      uses: ncipollo/release-action@v1
       with:
         prerelease: true
+        allowUpdates: true
+        removeArtifacts: true
         bodyFile: ReleaseNotes.md
         artifacts: "${{ env.BUILD_OUTPUT }}/*.zip"
         tag: "v${{ env.ITLWM_VER }}-alpha"
