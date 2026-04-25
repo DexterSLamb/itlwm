@@ -45,9 +45,9 @@ jobs:
     - name: Pack Artifacts
       run: |
         cd $BUILD_OUTPUT
-          zip -r itlwm-v${ITLWM_VER}-DEBUG-alpha-${SHORT_SHA}.zip itlwm.kext
+          zip -r itlwm-v${ITLWM_VER}-${SHORT_SHA}.zip itlwm.kext
           while read -r tgt ; do
-            zip -r AirportItlwm-${tgt// /_}-v${ITLWM_VER}-DEBUG-alpha-${SHORT_SHA}.zip "$tgt"
+            zip -r AirportItlwm-${tgt// /_}-v${ITLWM_VER}-${SHORT_SHA}.zip "$tgt"
           done < <(find . -mindepth 1 -maxdepth 1 -type d -not -path "*.kext" | cut -c 3-)
         cd -
 
@@ -58,23 +58,19 @@ jobs:
         path: ${{ env.BUILD_OUTPUT }}/*.zip
         retention-days: 30
 
-    - name: Generate Prerelease Release Notes
+    - name: Generate Release Notes
       run: |
-        echo '### Disclaimer:' >> ReleaseNotes.md
-        echo '***This alpha version is for testing only.***' >> ReleaseNotes.md
-        echo 'It is not ready for daily use and we do not guarantee its usability.' >> ReleaseNotes.md
-        echo 'If you discovered an issue and you do not have debugging skills, please check with the [Gitter Chat Room](https://gitter.im/OpenIntelWireless/itlwm) in advance before opening an Issue.' >> ReleaseNotes.md
-        echo '### The latest five updates are:' >> ReleaseNotes.md
-        git log -"5" --format="- %H %s" | sed '/^$/d' >> ReleaseNotes.md
+        echo '### Recent commits' > ReleaseNotes.md
+        git log -10 --format="- %h %s" | sed '/^$/d' >> ReleaseNotes.md
 
     - name: Publish GitHub Release
       if: contains(github.event.head_commit.message, 'Bump version') == false
       uses: ncipollo/release-action@v1
       with:
-        prerelease: true
+        prerelease: false
         allowUpdates: true
         removeArtifacts: true
         bodyFile: ReleaseNotes.md
         artifacts: "${{ env.BUILD_OUTPUT }}/*.zip"
-        tag: "v${{ env.ITLWM_VER }}-alpha"
+        tag: "v${{ env.ITLWM_VER }}"
         token: ${{ secrets.GITHUB_TOKEN }}
