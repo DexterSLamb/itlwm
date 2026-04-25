@@ -1,3 +1,58 @@
+# itlwm — DexterSLamb fork
+
+> **Fork-specific change**: this fork patches `AirportItlwm` to fix the
+> iServices breakage (iMessage / FaceTime / AirDrop / Continuity refusing
+> to use Wi-Fi) that affects upstream V2 builds on **macOS Sonoma 14.4+**.
+>
+> **Root cause**: the upstream V2 (Skywalk) path commented out the
+> `setLinkQualityMetric(100)` call from V1 because the API was renamed in
+> the new `IO80211SkywalkInterface` schema, but never ported to the
+> replacement `setLQM(uint64)`. As a result, the SCDynamicStore key
+> `State:/Network/Interface/<if>/LinkQuality` stays at the default
+> "no signal" value, `+[PCInterfaceUsabilityMonitor isBadLinkQuality:]`
+> (literal threshold `lq < 11`) marks the interface unusable, and
+> `apsd._connectStreamWithInterfacePreference:` rejects every interface
+> in the iServices APNS path.
+>
+> **Fix**: call `IO80211InfraInterface::setLQM(uint64)` (resolved via
+> virtual dispatch through `IO80211SkywalkInterface*`) on link-up and on
+> every 1 Hz watchdog tick, with the value mapped from current
+> `ni_rssi` to {100, 50, 25} so that signal degradation is reflected
+> while still keeping LQ above the iServices threshold of 11.
+>
+> Builds at https://github.com/DexterSLamb/itlwm/releases for every
+> macOS target the upstream project supports. The fork keeps
+> `MODULE_VERSION` at `2.3.0` so the binary drops in without OpenCore
+> config changes.
+>
+> See `docs/004` through `docs/007` (in this repository) for the full
+> reverse-engineering trail and reproducible Ghidra scripts.
+>
+> ---
+>
+> **本 fork 的改动**: 针对 macOS Sonoma 14.4+ 上 AirportItlwm V2 (Skywalk)
+> 路径下 iServices (iMessage / FaceTime / AirDrop / Continuity) 拒绝使用
+> Wi-Fi 接口的故障的修复。
+>
+> **根因**: 上游 V2 路径在 Skywalk 接口改名之后注释掉了 V1 里的
+> `setLinkQualityMetric(100)` 调用,但没有移植到替代 API
+> `setLQM(uint64)`。导致 SCDynamicStore 的
+> `State:/Network/Interface/<if>/LinkQuality` 一直是默认 "无信号" 值,
+> `+[PCInterfaceUsabilityMonitor isBadLinkQuality:]` (字面阈值 `lq < 11`)
+> 把接口判为不可用, `apsd._connectStreamWithInterfacePreference:` 拒绝
+> 所有接口, 整条 iServices APNS 链路失败。
+>
+> **修复**: 在 link-up 和每 1 Hz 看门狗 tick 调用
+> `IO80211InfraInterface::setLQM(uint64)` (通过 `IO80211SkywalkInterface*`
+> 的 virtual dispatch 解析), 根据当前 `ni_rssi` 映射到 {100, 50, 25} 三档,
+> 既反映信号变化, 又保持 LQ 高于 iServices 阈值 11。
+>
+> 构建产物在 https://github.com/DexterSLamb/itlwm/releases, 覆盖上游支持的
+> 全部 macOS 变体。fork 保留 `MODULE_VERSION = 2.3.0`, 二进制可直接替换
+> 不用改 OpenCore config。
+>
+> 完整反编译过程 + 可复现的 Ghidra 脚本见本仓库 `docs/004` 到 `docs/007`。
+
 # itlwm
 
 **An Intel Wi-Fi Adapter Kernel Extension for macOS, based on the OpenBSD Project.**
