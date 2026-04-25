@@ -47,6 +47,33 @@
 > 构建产物在 https://github.com/DexterSLamb/itlwm/releases, 覆盖上游支持的
 > 全部 macOS 变体。fork 保留 `MODULE_VERSION = 2.3.0`, 二进制可直接替换
 > 不用改 OpenCore config。
+>
+> ---
+>
+> ### Symptoms / 症状关键字
+>
+> If you're searching for any of these, you're in the right place. /
+> 如果你搜索下面任何一个关键字, 你来对地方了。
+>
+> - iMessage / iMessage waiting for activation / iMessage activation failed
+> - FaceTime not working / FaceTime activation could not complete
+> - AirDrop not finding devices on Hackintosh
+> - Continuity / Handoff not working between Mac and iPhone
+> - APNS push not working / push notifications broken
+> - `apsd` log: `no closed interfaces are usable`
+> - `apsd` log: `Push is connected? NO ... isBadLQ? YES`
+> - `apsd._connectStreamWithInterfacePreference:` rejecting interfaces
+> - `+[PCInterfaceUsabilityMonitor isBadLinkQuality:]`
+> - `PCNonCellularUsabilityMonitor` / `PCInterfaceMonitor`
+> - `scutil`: `State:/Network/Interface/en0/LinkQuality` returns `-2` or
+>   doesn't exist
+> - macOS Sonoma 14.4 / 14.5 / 14.6 / 14.7 / 14.8 / Sequoia 15.x +
+>   AirportItlwm v2.3.0 / v2.4.0 + Intel AX201 / AX210 / AX211 / AC9560 /
+>   Wi-Fi 6 / Wi-Fi 6E / Hackintosh / OpenCore: iServices fully broken
+> - 黑苹果 macOS 14.4+ 升级以后 iMessage / 短信中继 / 接力 / FaceTime /
+>   AirDrop / iCloud 推送 全部失效
+>
+> Upstream PR: https://github.com/OpenIntelWireless/itlwm/pull/1056
 
 # itlwm
 
