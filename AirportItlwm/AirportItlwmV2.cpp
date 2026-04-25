@@ -478,7 +478,6 @@ setLinkStatus(UInt32 status, const IONetworkMedium * activeMedium, UInt64 speed,
             bsdInterface->startOutputThread();
 #endif
             getCommandGate()->runAction(setLinkStateGated, (void *)kIO80211NetworkLinkUp, (void *)0);
-//            fNetIf->setLinkQualityMetric(100);
         } else if (!(status & kIONetworkLinkNoNetworkChange)) {
 #ifdef __PRIVATE_SPI__
             bsdInterface->stopOutputThread();
@@ -503,6 +502,7 @@ setLinkStateGated(OSObject *target, void *arg0, void *arg1, void *arg2, void *ar
     that->fNetIf->postMessage(APPLE80211_M_SSID_CHANGED, NULL, 0, false);
     if ((IO80211LinkState)(uint64_t)arg0 == kIO80211NetworkLinkUp) {
         that->fNetIf->reportLinkStatus(3, 0x80);
+        that->fNetIf->setLQM(100);
     } else {
         that->fNetIf->reportLinkStatus(1, 0);
     }
