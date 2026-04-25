@@ -97,7 +97,7 @@ void AirportItlwm::watchdogAction(IOTimerEventSource *timer)
 // entire iServices stack (iMessage / FaceTime / AirDrop) refuses to use WiFi.
 void AirportItlwm::updateLQMIfChanged()
 {
-    if (!fNetIf) {
+    if (!fNetIf || !fHalService) {
         return;
     }
     struct ieee80211com *ic = fHalService->get80211Controller();
