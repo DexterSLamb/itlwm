@@ -54,6 +54,13 @@ jobs:
           done < <(find . -mindepth 1 -maxdepth 1 -type d -not -path "*.kext" | cut -c 3-)
         cd -
 
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: kexts-${{ env.SHORT_SHA }}
+        path: ${{ env.BUILD_OUTPUT }}/*.zip
+        retention-days: 30
+
     - name: Generate Prerelease Release Notes
       run: |
         echo '### Disclaimer:' >> ReleaseNotes.md
