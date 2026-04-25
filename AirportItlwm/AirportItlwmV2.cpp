@@ -101,18 +101,25 @@ void AirportItlwm::updateLQMIfChanged()
         return;
     }
     struct ieee80211com *ic = fHalService->get80211Controller();
-    unsigned long long lq = 100;
-    if (ic && ic->ic_state == IEEE80211_S_RUN && ic->ic_bss) {
-        // ni_rssi is normalized 0..(IWM_MAX_DBM - IWM_MIN_DBM)
-        // i.e. 0 = -100 dBm, 67 = -33 dBm.
-        int rssi_norm = ic->ic_bss->ni_rssi;
-        if (rssi_norm >= 30) {
-            lq = 100;            // >= -70 dBm: excellent
-        } else if (rssi_norm >= 15) {
-            lq = 50;             // >= -85 dBm: mediocre
-        } else {
-            lq = 25;             // weak; still > iServices threshold (11)
-        }
+    if (!ic || ic->ic_state != IEEE80211_S_RUN) {
+        return;  // not associated; link-state mechanism signals unusable separately
+    }
+    // Snapshot ic_bss to a local — ieee80211 layer can clear it from another
+    // workloop between our check and deref.
+    struct ieee80211_node *ni = ic->ic_bss;
+    if (!ni) {
+        return;
+    }
+    // ni_rssi is normalized 0..(IWM_MAX_DBM - IWM_MIN_DBM)
+    // i.e. 0 = -100 dBm, 67 = -33 dBm.
+    int rssi_norm = ni->ni_rssi;
+    unsigned long long lq;
+    if (rssi_norm >= 30) {
+        lq = 100;                // >= -70 dBm: excellent
+    } else if (rssi_norm >= 15) {
+        lq = 50;                 // >= -85 dBm: mediocre
+    } else {
+        lq = 25;                 // weak; still > iServices threshold (11)
     }
     if (lq != fLastReportedLQM) {
         fLastReportedLQM = lq;
@@ -133,6 +140,7 @@ bool AirportItlwm::init(OSDictionary *properties)
     bool ret = super::init(properties);
     awdlSyncEnable = true;
     power_state = 0;
+    fLastReportedLQM = 0;
     memset(geo_location_cc, 0, sizeof(geo_location_cc));
     return ret;
 }
