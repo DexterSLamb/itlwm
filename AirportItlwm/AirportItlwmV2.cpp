@@ -86,7 +86,45 @@ void AirportItlwm::watchdogAction(IOTimerEventSource *timer)
 {
     struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
     (*ifp->if_watchdog)(ifp);
+    updateLQMIfChanged();
     watchdogTimer->setTimeoutMS(kWatchDogTimerPeriod);
+}
+
+// Compute and report Link Quality Metric. Replaces deprecated setLinkQualityMetric
+// path on Sonoma 14.4+ Skywalk schema. SCDynamicStore key
+// State:/Network/Interface/<if>/LinkQuality must be >= 11 for apsd /
+// PCInterfaceUsabilityMonitor to consider the interface usable, otherwise the
+// entire iServices stack (iMessage / FaceTime / AirDrop) refuses to use WiFi.
+void AirportItlwm::updateLQMIfChanged()
+{
+    if (!fNetIf || !fHalService) {
+        return;
+    }
+    struct ieee80211com *ic = fHalService->get80211Controller();
+    if (!ic || ic->ic_state != IEEE80211_S_RUN) {
+        return;  // not associated; link-state mechanism signals unusable separately
+    }
+    // Snapshot ic_bss to a local — ieee80211 layer can clear it from another
+    // workloop between our check and deref.
+    struct ieee80211_node *ni = ic->ic_bss;
+    if (!ni) {
+        return;
+    }
+    // ni_rssi is normalized 0..(IWM_MAX_DBM - IWM_MIN_DBM)
+    // i.e. 0 = -100 dBm, 67 = -33 dBm.
+    int rssi_norm = ni->ni_rssi;
+    unsigned long long lq;
+    if (rssi_norm >= 30) {
+        lq = 100;                // >= -70 dBm: excellent
+    } else if (rssi_norm >= 15) {
+        lq = 50;                 // >= -85 dBm: mediocre
+    } else {
+        lq = 25;                 // weak; still > iServices threshold (11)
+    }
+    if (lq != fLastReportedLQM) {
+        fLastReportedLQM = lq;
+        fNetIf->setLQM(lq);
+    }
 }
 
 void AirportItlwm::fakeScanDone(OSObject *owner, IOTimerEventSource *sender)
@@ -102,6 +140,7 @@ bool AirportItlwm::init(OSDictionary *properties)
     bool ret = super::init(properties);
     awdlSyncEnable = true;
     power_state = 0;
+    fLastReportedLQM = 0;
     memset(geo_location_cc, 0, sizeof(geo_location_cc));
     return ret;
 }
@@ -478,7 +517,6 @@ setLinkStatus(UInt32 status, const IONetworkMedium * activeMedium, UInt64 speed,
             bsdInterface->startOutputThread();
 #endif
             getCommandGate()->runAction(setLinkStateGated, (void *)kIO80211NetworkLinkUp, (void *)0);
-//            fNetIf->setLinkQualityMetric(100);
         } else if (!(status & kIONetworkLinkNoNetworkChange)) {
 #ifdef __PRIVATE_SPI__
             bsdInterface->stopOutputThread();
@@ -503,8 +541,10 @@ setLinkStateGated(OSObject *target, void *arg0, void *arg1, void *arg2, void *ar
     that->fNetIf->postMessage(APPLE80211_M_SSID_CHANGED, NULL, 0, false);
     if ((IO80211LinkState)(uint64_t)arg0 == kIO80211NetworkLinkUp) {
         that->fNetIf->reportLinkStatus(3, 0x80);
+        that->updateLQMIfChanged();
     } else {
         that->fNetIf->reportLinkStatus(1, 0);
+        that->fLastReportedLQM = 0;
     }
     that->bsdInterface->setLinkState((IO80211LinkState)(uint64_t)arg0);
     return ret;
