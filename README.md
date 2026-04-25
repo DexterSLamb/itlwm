@@ -25,9 +25,6 @@
 > `MODULE_VERSION` at `2.3.0` so the binary drops in without OpenCore
 > config changes.
 >
-> See `docs/004` through `docs/007` (in this repository) for the full
-> reverse-engineering trail and reproducible Ghidra scripts.
->
 > ---
 >
 > **本 fork 的改动**: 针对 macOS Sonoma 14.4+ 上 AirportItlwm V2 (Skywalk)
@@ -50,8 +47,6 @@
 > 构建产物在 https://github.com/DexterSLamb/itlwm/releases, 覆盖上游支持的
 > 全部 macOS 变体。fork 保留 `MODULE_VERSION = 2.3.0`, 二进制可直接替换
 > 不用改 OpenCore config。
->
-> 完整反编译过程 + 可复现的 Ghidra 脚本见本仓库 `docs/004` 到 `docs/007`。
 
 # itlwm
 
