@@ -249,7 +249,11 @@ public:
     OSMetaClassDeclareReservedUnused( IO80211Controller, 14);
     OSMetaClassDeclareReservedUnused( IO80211Controller, 15);
     
+#if __IO80211_TARGET >= __MAC_15_0
+    virtual void postMessage(IO80211SkywalkInterface *,UInt,void *,unsigned long,bool);
+#else
     virtual void postMessage(UInt,void *,unsigned long,UInt,void *);
+#endif
     virtual IOReturn setMulticastList(ether_addr const*, UInt);
 
 protected:

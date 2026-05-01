@@ -42,6 +42,14 @@ jobs:
       run: |
         xcodebuild -scheme "AirportItlwm (all)" -configuration Debug -derivedDataPath build GIT_COMMIT=_${SHORT_SHA} | xcpretty && exit ${PIPESTATUS[0]}
 
+    - name: Build AirportItlwm-Sequoia15
+      run: |
+        xcodebuild -target "AirportItlwm-Sonoma14.4" -configuration Debug -derivedDataPath build \
+          GIT_COMMIT=_${SHORT_SHA} \
+          GCC_PREPROCESSOR_DEFINITIONS='$(inherited) __IO80211_TARGET=__MAC_15_0' \
+          CONFIGURATION_BUILD_DIR='$(SYMROOT)/$(CONFIGURATION)/Sequoia15' \
+          | xcpretty && exit ${PIPESTATUS[0]}
+
     - name: Pack Artifacts
       run: |
         cd $BUILD_OUTPUT
