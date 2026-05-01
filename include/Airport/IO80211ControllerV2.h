@@ -154,7 +154,9 @@ public:
     virtual const OSString * newModelString() const APPLE_KEXT_OVERRIDE;
     virtual bool createWorkLoop() APPLE_KEXT_OVERRIDE;
     virtual IOReturn getHardwareAddress(IOEthernetAddress *) APPLE_KEXT_OVERRIDE;
+#if __IO80211_TARGET < __MAC_15_0
     virtual IOReturn setHardwareAddress(const IOEthernetAddress * addrP) APPLE_KEXT_OVERRIDE;
+#endif
     virtual IOReturn setMulticastMode(bool active) APPLE_KEXT_OVERRIDE;
     virtual IOReturn setPromiscuousMode(bool active) APPLE_KEXT_OVERRIDE;
     virtual bool isCommandProhibited(int) = 0;
@@ -162,13 +164,17 @@ public:
     virtual IO80211WorkQueue *getWorkQueue();
     virtual void requestPacketTx(void*, UInt);
     virtual IOCommandGate *getIO80211CommandGate();
+#if __IO80211_TARGET < __MAC_15_0
     virtual IOReturn getHardwareAddressForInterface(IOEthernetAddress *);
     virtual bool useAppleRSNSupplicant(IO80211VirtualInterface *);
+#endif
     virtual IO80211SkywalkInterface* getPrimarySkywalkInterface(void);
     virtual int bpfOutputPacket(OSObject *,UInt,mbuf_t m);
     virtual SInt32 monitorModeSetEnabled(bool, UInt);
     virtual SInt32 apple80211_ioctl(IO80211SkywalkInterface *,unsigned long,void *, bool, bool);
+#if __IO80211_TARGET < __MAC_15_0
     virtual SInt32 apple80211VirtualRequest(UInt,int,IO80211VirtualInterface *,void *);
+#endif
     virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *);
     virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *,void *);
     
@@ -189,7 +195,9 @@ public:
     virtual IOReturn setCOUNTRY_CODE(IO80211SkywalkInterface *,apple80211_country_code_data *) = 0;
     virtual IOReturn setGET_DEBUG_INFO(IO80211SkywalkInterface *,apple80211_debug_command *) = 0;
     
+#if __IO80211_TARGET < __MAC_15_0
     virtual SInt32 setVirtualHardwareAddress(IO80211VirtualInterface *,ether_addr *);
+#endif
     virtual SInt32 enableVirtualInterface(IO80211VirtualInterface *);
     virtual SInt32 disableVirtualInterface(IO80211VirtualInterface *);
     virtual bool requiresExplicitMBufRelease();
@@ -220,11 +228,15 @@ public:
     virtual bool wasDynSARInFailSafeMode(void) { return false; }
     virtual void updateAdvisoryScoresIfNeed(void);
     virtual UInt64 getAVCAdvisoryInfo(IO80211InterfaceAVCAdvisory *);
+#if __IO80211_TARGET < __MAC_15_0
     virtual SInt32 apple80211_ioctl_get(IO80211SkywalkInterface *,void *, bool, bool);
     virtual SInt32 apple80211_ioctl_set(IO80211SkywalkInterface *,void *, bool, bool);
+#endif
     virtual bool attachInterface(OSObject *,IOService *);
+#if __IO80211_TARGET < __MAC_15_0
     virtual SInt32 apple80211_ioctl_get(IO80211VirtualInterface *,void *,bool,bool);
     virtual SInt32 apple80211_ioctl_set(IO80211VirtualInterface *,void *,bool,bool);
+#endif
     virtual void detachInterface(OSObject *,bool);
     virtual IO80211VirtualInterface* createVirtualInterface(ether_addr *,UInt);
     virtual bool attachVirtualInterface(IO80211VirtualInterface **,ether_addr *,UInt,bool);

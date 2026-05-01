@@ -35,7 +35,9 @@ public:
     virtual void *getInterfaceSubFamily(void) APPLE_KEXT_OVERRIDE;
     virtual UInt getInitialMedia(void) APPLE_KEXT_OVERRIDE;
     virtual const char *getBSDNamePrefix(void) APPLE_KEXT_OVERRIDE;
+#if __IO80211_TARGET < __MAC_15_0
     virtual IOReturn registerNetworkInterfaceWithLogicalLink(IOSkywalkEthernetInterface::RegistrationInfo const*, IOSkywalkLogicalLink*, IOSkywalkPacketBufferPool*, IOSkywalkPacketBufferPool*, UInt);
+#endif
     virtual void getHardwareAddress(ether_addr *);
     virtual void setHardwareAddress(ether_addr *);
     virtual void setLinkLayerAddress(ether_addr *);

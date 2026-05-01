@@ -89,9 +89,17 @@ public:
     virtual IOReturn recordOutputPackets(TxSubmissionDequeueStats *,TxSubmissionDequeueStats *);
     virtual IOReturn recordOutputPacket(apple80211_wme_ac,int,int);
     virtual void logTxPacket(IO80211NetworkPacket *,PacketSkywalkScratch *,apple80211_wme_ac,bool);
+#if __IO80211_TARGET >= __MAC_15_0
+    virtual void logTxCompletionPacket(IO80211NetworkPacket *,PacketSkywalkScratch *,unsigned char *,apple80211_wme_ac,int,UInt,bool,bool);
+#else
     virtual void logTxCompletionPacket(IO80211NetworkPacket *,PacketSkywalkScratch *,unsigned char *,apple80211_wme_ac,int,UInt,bool);
+#endif
     virtual IOReturn recordCompletionPackets(TxCompletionEnqueueStats *,TxCompletionEnqueueStats *);
+#if __IO80211_TARGET >= __MAC_15_0
+    virtual IOReturn inputPacket(IO80211NetworkPacket *,packet_info_tag *,ether_header *,bool *,bool);
+#else
     virtual IOReturn inputPacket(IO80211NetworkPacket *,packet_info_tag *,ether_header *,bool *);
+#endif
     virtual IOReturn forwardInfraRelayPackets(IO80211NetworkPacket*, ether_header*);
     virtual void logSkywalkTxReqPacket(IO80211NetworkPacket *,PacketSkywalkScratch *,unsigned char *,apple80211_wme_ac,bool);
     virtual SInt64 pendingPackets(unsigned char);
@@ -147,7 +155,9 @@ public:
     virtual bool init(IOService *);
     virtual bool isInterfaceEnabled(void);
     virtual ether_addr *getSelfMacAddr(void);
+#if __IO80211_TARGET < __MAC_15_0
     virtual void setSelfMacAddr(ether_addr *);
+#endif
     virtual void *getPacketPool(OSString *);
     virtual void *getLogger(void);
     virtual IOReturn handleSIOCSIFADDR(void);
@@ -159,7 +169,9 @@ public:
     virtual UInt64 getRxQueueCapacity(void);
     virtual void updateRxCounter(unsigned long long);
     virtual void *getMultiCastQueue(void);
+#if __IO80211_TARGET < __MAC_15_0
     virtual void *getCurrentBssid(void);
+#endif
     virtual int getAssocState(void);
     virtual void notifyQueueState(apple80211_wme_ac,unsigned short);
     virtual int getTxHeadroom(void);
