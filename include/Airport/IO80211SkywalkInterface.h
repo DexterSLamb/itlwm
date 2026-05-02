@@ -161,9 +161,10 @@ public:
     virtual bool init(IOService *);
     virtual bool isInterfaceEnabled(void);
     virtual ether_addr *getSelfMacAddr(void);
-#if __IO80211_TARGET < __MAC_15_0
+    // 15.7.5 ground truth slot 417: setSelfMacAddr is now an
+    // IO80211SkywalkInterface method (was NEW per drift report).
+    // Keep declared in both target branches.
     virtual void setSelfMacAddr(ether_addr *);
-#endif
     virtual void *getPacketPool(OSString *);
     virtual void *getLogger(void);
     virtual IOReturn handleSIOCSIFADDR(void);
@@ -175,9 +176,10 @@ public:
     virtual UInt64 getRxQueueCapacity(void);
     virtual void updateRxCounter(unsigned long long);
     virtual void *getMultiCastQueue(void);
-#if __IO80211_TARGET < __MAC_15_0
+    // 15.7.5 ground truth slot 429: getCurrentBssid is also present in Sequoia
+    // (was previously thought to be Sonoma-only). Source:
+    // research/sequoia-port/diff/15.7.5-IO80211SkywalkInterface-vtable.txt
     virtual void *getCurrentBssid(void);
-#endif
     virtual int getAssocState(void);
     virtual void notifyQueueState(apple80211_wme_ac,unsigned short);
     virtual int getTxHeadroom(void);
