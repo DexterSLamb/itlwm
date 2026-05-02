@@ -230,11 +230,22 @@ initCCLogs()
     io80211FaultReporter = NULL;
     if (driverFaultReporter) {
         CCDataStream *fdStream = OSDynamicCast(CCDataStream, driverFaultReporter);
-        if (fdStream && _fWorkloop) {
-            CCFaultReporter *ccfr = CCFaultReporter::withStreamWorkloop(fdStream, _fWorkloop);
-            if (ccfr) {
-                io80211FaultReporter = IO80211FaultReporter::allocWithParams(ccfr);
-                ccfr->release();  // allocWithParams retains
+        if (fdStream) {
+            // Dedicated workloop for the fault reporter (matches Apple's
+            // AppleBCMWLANLogger pattern). Using the driver's shared
+            // _fWorkloop is dangerous because CCFaultReporter retains and
+            // schedules callbacks on it.
+            IOWorkLoop *frWorkloop = IOWorkLoop::workLoop();
+            if (frWorkloop) {
+                CCFaultReporter *ccfr = CCFaultReporter::withStreamWorkloop(fdStream, frWorkloop);
+                if (ccfr) {
+                    // allocWithParams takes OWNERSHIP of ccfr (does NOT
+                    // retain). Releasing ccfr here causes use-after-free
+                    // when ScanManager/PeerManager later call
+                    // CCFaultReporter::registerCallbacks via the wrapper.
+                    io80211FaultReporter = IO80211FaultReporter::allocWithParams(ccfr);
+                }
+                frWorkloop->release();  // CCFaultReporter retains workloop
             }
         }
     }
