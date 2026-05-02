@@ -16,7 +16,9 @@ class IOSkywalkPacketBufferPool;
 class IOSkywalkPacketQueue;
 class IOSkywalkRxCompletionQueue;
 
-typedef IOReturn (*IOSkywalkRxCompletionQueueAction)(OSObject *owner, IOSkywalkRxCompletionQueue *, IOSkywalkPacket **, UInt32, void *);
+// Sequoia 15.7.5 ground truth: callback returns unsigned int (mangled "j"),
+// not IOReturn (mangled "i"). See IOSkywalkTxSubmissionQueue.h for rationale.
+typedef unsigned int (*IOSkywalkRxCompletionQueueAction)(OSObject *owner, IOSkywalkRxCompletionQueue *, IOSkywalkPacket **, UInt32, void *);
 
 class IOSkywalkRxCompletionQueue : public OSObject {
     OSDeclareDefaultStructors(IOSkywalkRxCompletionQueue)

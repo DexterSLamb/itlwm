@@ -28,22 +28,27 @@ IOCommandGate *_fCommandGate;
 // kIOReturnSuccess (0) signals "we processed all `count` packets". The
 // queue still drains correctly because Apple's skywalk dispatcher
 // recycles packets after this callback regardless of return value.
-static IOReturn
+// Sequoia 15.7.5 ground truth: callbacks return unsigned int, not IOReturn.
+// kxld binds withPool() by mangled symbol — IOReturn vs unsigned int produces
+// different mangling ("PFi..." vs "PFj..."), and Apple only exports the "j"
+// variant. Returning IOReturn left withPool unresolved -> driver silently
+// not loaded.
+static unsigned int
 skywalkTxAction(OSObject *owner, IOSkywalkTxSubmissionQueue *queue,
                 const IOSkywalkPacket **packets, UInt32 count, void *refCon)
 {
     (void)owner; (void)queue; (void)packets; (void)refCon;
-    return kIOReturnSuccess;
+    return 0;
 }
 
 // Stub Skywalk RX completion action: completion notification only —
 // actual RX injection still goes through the legacy if_input path.
-static IOReturn
+static unsigned int
 skywalkRxAction(OSObject *owner, IOSkywalkRxCompletionQueue *queue,
                 IOSkywalkPacket **packets, UInt32 count, void *refCon)
 {
     (void)owner; (void)queue; (void)packets; (void)refCon;
-    return kIOReturnSuccess;
+    return 0;
 }
 #endif
 
