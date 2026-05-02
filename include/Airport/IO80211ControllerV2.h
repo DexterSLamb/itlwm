@@ -267,12 +267,36 @@ protected:
 };
 #else // __IO80211_TARGET >= __MAC_15_0
 // =============================================================================
-// Sequoia 15+ path - 完整复刻 Apple Sequoia 15.7.4 KDK 中 IO80211Controller
-// 实际 vtable layout. 每个方法的 slot 注释来自从 KDK debug binary
-// (research/sequoia-port/diff/sequoia-IO80211Controller-vtable.txt) 解析的
-// relocation table. 顺序绝对不能改, 否则我们 derived class 的 vtable
-// 跟 Apple 实际 IO80211Controller vtable 漂移, OC 的 OCAK vtable patcher
-// 会失败.
+// Sequoia 15.7.5 path — IO80211Controller vtable layout reflecting Apple's
+// actual binary BootKernelExtensions-actual.kc (md5 ea9a509af28abc5c0c51217f83add983).
+//
+// Slot ordering verified against:
+//   research/sequoia-port/diff/15.7.5-IO80211Controller-vtable.txt
+//
+// Key differences vs 15.7.4 KDK that the previous header was based on:
+//   - slot 398: getWorkQueue is now CONST (debugStateInit removed in 15.7.5)
+//   - slot 401: NEW getHardwareAddressForInterface
+//   - slot 402: NEW useAppleRSNSupplicant
+//   - slot 406: NEW apple80211_ioctl(IO80211SkywalkInterface*, ulong, void*, bool, bool)
+//   - slot 407-409: NEW apple80211{Virtual,Skywalk}Request methods (×3)
+//   - slot 410: PV padding (no func)
+//   - slot 415-422: 8 PV slots (Apple removed several class methods, replaced with PVs)
+//   - slot 423: NEW setVirtualHardwareAddress
+//   - slot 426: requiresExplicitMBufRelease (not "getControllerGlobalLogger")
+//   - slot 427: flowIdSupported (real Apple impl)
+//   - slot 432: requestQueueSizeAndTimeout (was 428 in 15.7.4)
+//   - slot 436: getDriverTextLog (was 432 in 15.7.4); this IS the CCLogStream getter
+//   - slot 438: getFaultReporterFromDriver (was 434 in 15.7.4)
+//   - slot 440: NEW isAssociatedToMovingNetwork
+//   - slot 444-445: NEW apple80211_ioctl_get/set(IO80211SkywalkInterface*, ...)
+//   - slot 447-448: NEW apple80211_ioctl_get/set(IO80211VirtualInterface*, ...)
+//   - slot 453-454: NEW enable/disable(IO80211SkywalkInterface*)
+//   - slot 471: postMessage (was 464 in 15.7.4 / current header)
+//
+// IOEthernetController extension at slots 331-332: Apple inserted
+// allocatePacketNoWait + setHardwareAssists in 15.7. We can't add them to
+// the parent IOEthernetController; instead we leave a placeholder gap
+// (handled by MacKernelSDK header drift; vtable patcher tolerates this).
 // =============================================================================
 class IO80211Controller : public IOEthernetController {
     OSDeclareAbstractStructors(IO80211Controller)
@@ -280,7 +304,6 @@ class IO80211Controller : public IOEthernetController {
 public:
 
     // --- IOEthernetController / IONetworkController / IOService overrides ---
-    // 这些 override 占父类已有的 vtable slot 位置, 不会增加新 slot
     virtual void free() APPLE_KEXT_OVERRIDE;
     virtual bool init(OSDictionary *) APPLE_KEXT_OVERRIDE;
     virtual IOReturn configureReport(IOReportChannelList *,UInt,void *,void *) APPLE_KEXT_OVERRIDE;
@@ -295,112 +318,123 @@ public:
     virtual const OSString * newModelString() const APPLE_KEXT_OVERRIDE;
     virtual bool createWorkLoop() APPLE_KEXT_OVERRIDE;
     virtual IOReturn getHardwareAddress(IOEthernetAddress *) APPLE_KEXT_OVERRIDE;  // slot 358
+    // NB: setHardwareAddress(IOEthernetAddress*) at slot 359 is now an
+    // IO80211Controller-owned override per 15.7.5 vtable. Declared in our
+    // class so Apple's setHardwareAddressGated dispatcher dispatches into
+    // the correct slot. AirportItlwm overrides the (void*, UInt32) variant.
     virtual IOReturn setMulticastMode(bool active) APPLE_KEXT_OVERRIDE;             // slot 360
     virtual IOReturn setPromiscuousMode(bool active) APPLE_KEXT_OVERRIDE;           // slot 362
 
-    // --- IO80211Controller's own new vmethods, 严格按 Sequoia slot 顺序声明 ---
-    //
-    // SLOT 396 占位:
-    // KDK 15.7.4 IO80211Family 反编译数据显示 Apple 的 IO80211Controller vtable
-    // slot 396 = ___cxa_pure_virtual, 即 Apple 在 IOEthernetController (or some
-    // base) 加了一个新 pure virtual, KDK 自带的 IONetworkingFamily.kext (15.7.4)
-    // 还没 reflect 这个改动 (slot 395 RESERVED31 之后是 null padding). MacKernelSDK
-    // 的 IOEthernetController.h 同样比 Apple 少 1 个 vmethod, 导致我们 derived
-    // AirportItlwm 的 vtable 整体 shift -1, OC 的 OCAK vtable patcher 在 RESERVED1
-    // 等位置定位失败 (报 "Invalid Parameter" / "Failed to patch symbol").
-    // 在 IO80211Controller 第一个 own vmethod 之前显式占 1 个 slot, 让后续所有 slot
-    // 对齐到 Apple ground truth (createWorkQueue=397, ..., RESERVED0=448, ...,
-    // setMulticastList=464). 方法名仅作 placeholder, 不会被任何 caller 调用.
-    virtual void _seq_eth_ext_slot396_placeholder() {}                              // slot 396 [Sequoia ABI alignment]
-    // Sequoia ABI: Apple's IO80211Controller::start (KDK 15.7.4 vmaddr 0x112c6c)
-    // calls slot 397 via `callq *0xc68(%rax)` and treats %rax return as
-    // IO80211WorkQueue*, then passes it to IO80211CommandGate::allocWithParams
-    // as the workqueue arg. Returning bool here means high 56 bits of %rax are
-    // garbage, making allocWithParams fail with a junk pointer -> super::start
-    // silently returns false. Must return IO80211WorkQueue*.
+    // SLOT 396 placeholder — see comment in 15.7.4 path above; same situation
+    // in 15.7.5: Apple's vtable has a ___cxa_pure_virtual padding slot that
+    // MacKernelSDK's IOEthernetController doesn't expose. Force one extra
+    // vmethod here to keep AirportItlwm's vtable aligned with Apple.
+    virtual void _seq_eth_ext_slot396_placeholder() {}                              // slot 396
+
+    // --- IO80211Controller's own new vmethods, slot order matches 15.7.5 ---
+
+    // slot 397: createWorkQueue MUST return IO80211WorkQueue* (not bool) —
+    // Apple's IO80211Controller::start passes the return to
+    // IO80211CommandGate::allocWithParams as the workqueue arg.
     virtual IO80211WorkQueue *createWorkQueue();                                    // slot 397
-    virtual void debugStateInit();                                                  // slot 398 [NEW IN SEQUOIA]
-    virtual IO80211WorkQueue *getWorkQueue();                                       // slot 399
-    virtual void requestPacketTx(void*, UInt);                                      // slot 400
-    virtual IOCommandGate *getIO80211CommandGate();                                 // slot 401
-    virtual IO80211SkywalkInterface* getPrimarySkywalkInterface(void);              // slot 402
-    virtual int bpfOutputPacket(OSObject *,UInt,mbuf_t m);                          // slot 403
-    virtual SInt32 monitorModeSetEnabled(bool, UInt);                               // slot 404
-    virtual bool isCommandProhibited(int) = 0;                                      // slot 405 [PV]
-    virtual UInt32 hardwareOutputQueueDepth();                                      // slot 406
-    virtual SInt32 performCountryCodeOperation(IO80211CountryCodeOp);               // slot 407
-    virtual void dataLinkLayerAttachComplete();                                     // slot 408
-    // slot 409 — Apple 有真实 impl, 我们声明非 PV 以匹配 Apple vtable entry kind.
-    // 我们 derived AirportItlwm 仍可 override 这个方法; 不需 = 0.
-    virtual SInt32 enableFeature(IO80211FeatureCode, void*);                        // slot 409
-    virtual IOReturn getDRIVER_VERSION(IO80211SkywalkInterface *,apple80211_version_data *) = 0;     // 410 [PV]
-    virtual IOReturn getHARDWARE_VERSION(IO80211SkywalkInterface *,apple80211_version_data *) = 0;   // 411 [PV]
-    virtual IOReturn getCARD_CAPABILITIES(IO80211SkywalkInterface *,apple80211_capability_data *) = 0;// 412 [PV]
-    virtual IOReturn getPOWER(IO80211SkywalkInterface *,apple80211_power_data *) = 0;                // 413 [PV]
-    virtual IOReturn setPOWER(IO80211SkywalkInterface *,apple80211_power_data *) = 0;                // 414 [PV]
-    virtual IOReturn getCOUNTRY_CODE(IO80211SkywalkInterface *,apple80211_country_code_data *) = 0;  // 415 [PV]
-    virtual IOReturn setCOUNTRY_CODE(IO80211SkywalkInterface *,apple80211_country_code_data *) = 0;  // 416 [PV]
-    virtual IOReturn setGET_DEBUG_INFO(IO80211SkywalkInterface *,apple80211_debug_command *) = 0;    // 417 [PV]
-    virtual IOReturn getPLATFORM_CONFIG(IO80211SkywalkInterface *,apple80211_platform_config *);     // 418 [NEW IN SEQUOIA]
-    virtual SInt32 enableVirtualInterface(IO80211VirtualInterface *);                                // 419
-    virtual SInt32 disableVirtualInterface(IO80211VirtualInterface *);                               // 420
-    virtual bool requiresExplicitMBufRelease();                                                       // 421
-    virtual bool flowIdSupported() { return false; }                                                  // 422
-    virtual IO80211FlowQueueLegacy* requestFlowQueue(FlowIdMetadata const*);                          // 423
-    virtual void releaseFlowQueue(IO80211FlowQueue *);                                                // 424
-    virtual bool getLogPipes(CCPipe**, CCPipe**, CCPipe**);                                           // 425
-    // slot 426 [PV] — Apple's IO80211ControllerMonitor::initWithControllerAndProvider
-    // (KDK 15.7.4 vmaddr 0x1f7086) does:
-    //   movq (%r15), %rax     ; controller vptr
-    //   callq *0xd40(%rax)    ; slot = 2 + 0xd40/8 = 426
-    //   movq %rax, 0xdb0(%rcx); store as ivars->fLogger
-    //   testq %rax, %rax
-    //   je → "Unable to get ivars->fLogger" → return NULL → createIOReporters fail → start fail
-    // Apple expects CCLogStream* (the controller-wide log stream), zero-arg.
-    // Sonoma 14.4 had this slot as RESERVED (not called); Sequoia 15.x activated
-    // it. Old itlwm header guessed name "handleCardSpecific" with 4 args returning
-    // SInt32 — that override returned 0 (NULL), breaking Sequoia.
-    virtual void *getControllerGlobalLogger() = 0;                                  // 426 [PV] - CCLogStream*
-    virtual void enableFeatureForLoggingFlags(unsigned long long) {}                                  // 427
-    virtual IOReturn requestQueueSizeAndTimeout(unsigned short *, unsigned short *) { return kIOReturnIOError; } // 428
-    virtual IOReturn enablePacketTimestamping(void) { return kIOReturnUnsupported; }                  // 429
-    virtual IOReturn disablePacketTimestamping(void) { return kIOReturnUnsupported; }                 // 430
-    virtual UInt getPacketTSCounter();                                                                // 431
-    virtual void *getDriverTextLog();                                                                 // 432
-    virtual UInt32 selfDiagnosticsReport(int,char const*,UInt);                                       // 433
-    virtual void *getFaultReporterFromDriver() = 0;                                                   // 434 [PV in Sequoia]
-    virtual void *allocIO80211RecursiveLock();                                                        // 435 [NEW IN SEQUOIA]
-    virtual UInt32 getDataQueueDepth(OSObject *);                                                     // 436
-    virtual bool wasDynSARInFailSafeMode(void) { return false; }                                      // 437
-    virtual void updateAdvisoryScoresIfNeed(void);                                                    // 438
-    virtual UInt64 getAVCAdvisoryInfo(IO80211InterfaceAVCAdvisory *);                                 // 439
-    virtual UInt getActionFramePoolCapacity();                                                        // 440 [NEW IN SEQUOIA]
-    virtual void *getPostOffice();                                                                    // 441 [NEW IN SEQUOIA]
-    virtual void CreatePostOffice();                                                                  // 442 [NEW IN SEQUOIA]
-    virtual bool attachInterface(OSObject *,IOService *);                                             // 443
-    virtual void detachInterface(OSObject *,bool);                                                    // 444
-    virtual IO80211VirtualInterface* createVirtualInterface(ether_addr *,UInt);                       // 445
-    virtual bool attachVirtualInterface(IO80211VirtualInterface **,ether_addr *,UInt,bool);           // 446
-    virtual bool detachVirtualInterface(IO80211VirtualInterface *,bool);                              // 447
+    virtual IO80211WorkQueue *getWorkQueue() const;                                 // slot 398 [now CONST in 15.7.5]
+    virtual void requestPacketTx(void*, UInt);                                      // slot 399
+    virtual IOCommandGate *getIO80211CommandGate() const;                           // slot 400 [now CONST in 15.7.5]
+    virtual IOReturn getHardwareAddressForInterface(IOEthernetAddress *);           // slot 401 [NEW]
+    virtual bool useAppleRSNSupplicant(IO80211VirtualInterface *);                  // slot 402 [NEW]
+    virtual IO80211SkywalkInterface* getPrimarySkywalkInterface(void);              // slot 403
+    virtual int bpfOutputPacket(OSObject *,UInt,mbuf_t m);                          // slot 404
+    virtual SInt32 monitorModeSetEnabled(bool, UInt);                               // slot 405
+    virtual SInt32 apple80211_ioctl(IO80211SkywalkInterface *,unsigned long,void *,bool,bool); // slot 406 [NEW]
+    virtual SInt32 apple80211VirtualRequest(UInt,int,IO80211VirtualInterface *,void *);        // slot 407 [NEW]
+    virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *);        // slot 408 [NEW]
+    virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *,void *); // slot 409 [NEW overload]
+    virtual bool isCommandProhibited(int) = 0;                                      // slot 410 [PV]
+    virtual UInt32 hardwareOutputQueueDepth();                                      // slot 411
+    virtual SInt32 performCountryCodeOperation(IO80211CountryCodeOp);               // slot 412
+    virtual void dataLinkLayerAttachComplete();                                     // slot 413
+    virtual SInt32 enableFeature(IO80211FeatureCode, void*);                        // slot 414
 
-    OSMetaClassDeclareReservedUnused( IO80211Controller,  0);  // slot 448
-    OSMetaClassDeclareReservedUnused( IO80211Controller,  1);  // slot 449  ← 之前 OC 报错的位置, 现在应对齐
-    OSMetaClassDeclareReservedUnused( IO80211Controller,  2);  // slot 450
-    OSMetaClassDeclareReservedUnused( IO80211Controller,  3);  // slot 451
-    OSMetaClassDeclareReservedUnused( IO80211Controller,  4);  // slot 452
-    OSMetaClassDeclareReservedUnused( IO80211Controller,  5);  // slot 453
-    OSMetaClassDeclareReservedUnused( IO80211Controller,  6);  // slot 454
-    OSMetaClassDeclareReservedUnused( IO80211Controller,  7);  // slot 455
-    OSMetaClassDeclareReservedUnused( IO80211Controller,  8);  // slot 456
-    OSMetaClassDeclareReservedUnused( IO80211Controller,  9);  // slot 457
-    OSMetaClassDeclareReservedUnused( IO80211Controller, 10);  // slot 458
-    OSMetaClassDeclareReservedUnused( IO80211Controller, 11);  // slot 459
-    OSMetaClassDeclareReservedUnused( IO80211Controller, 12);  // slot 460
-    OSMetaClassDeclareReservedUnused( IO80211Controller, 13);  // slot 461
-    OSMetaClassDeclareReservedUnused( IO80211Controller, 14);  // slot 462
-    OSMetaClassDeclareReservedUnused( IO80211Controller, 15);  // slot 463
+    // slots 415-422: Apple's vtable has 8 PV slots here in 15.7.5.
+    // These were getDRIVER_VERSION..setGET_DEBUG_INFO in 15.7.4. In 15.7.5
+    // they appear to be retained as PVs (driver-implemented IOCTL hooks).
+    virtual IOReturn getDRIVER_VERSION(IO80211SkywalkInterface *,apple80211_version_data *) = 0;     // 415 [PV]
+    virtual IOReturn getHARDWARE_VERSION(IO80211SkywalkInterface *,apple80211_version_data *) = 0;   // 416 [PV]
+    virtual IOReturn getCARD_CAPABILITIES(IO80211SkywalkInterface *,apple80211_capability_data *) = 0;// 417 [PV]
+    virtual IOReturn getPOWER(IO80211SkywalkInterface *,apple80211_power_data *) = 0;                // 418 [PV]
+    virtual IOReturn setPOWER(IO80211SkywalkInterface *,apple80211_power_data *) = 0;                // 419 [PV]
+    virtual IOReturn getCOUNTRY_CODE(IO80211SkywalkInterface *,apple80211_country_code_data *) = 0;  // 420 [PV]
+    virtual IOReturn setCOUNTRY_CODE(IO80211SkywalkInterface *,apple80211_country_code_data *) = 0;  // 421 [PV]
+    virtual IOReturn setGET_DEBUG_INFO(IO80211SkywalkInterface *,apple80211_debug_command *) = 0;    // 422 [PV]
 
-    virtual IOReturn setMulticastList(ether_addr const*, UInt); // slot 464
+    virtual SInt32 setVirtualHardwareAddress(IO80211VirtualInterface *,ether_addr *);                // 423 [NEW]
+    virtual SInt32 enableVirtualInterface(IO80211VirtualInterface *);                                // 424
+    virtual SInt32 disableVirtualInterface(IO80211VirtualInterface *);                               // 425
+
+    // slot 426: requiresExplicitMBufRelease — Apple has its own impl in 15.7.5.
+    // Earlier theory that this was "getControllerGlobalLogger" was wrong: that
+    // was a 14.x slot inference; in 15.7.5 the global-logger getter is
+    // getDriverTextLog at slot 436. Drivers may override to return false.
+    virtual bool requiresExplicitMBufRelease();                                                       // 426
+    virtual bool flowIdSupported();                                                                   // 427
+    virtual IO80211FlowQueueLegacy* requestFlowQueue(FlowIdMetadata const*);                          // 428
+    virtual void releaseFlowQueue(IO80211FlowQueue *);                                                // 429
+    virtual bool getLogPipes(CCPipe**, CCPipe**, CCPipe**);                                           // 430
+    virtual void enableFeatureForLoggingFlags(unsigned long long);                                    // 431
+    virtual IOReturn requestQueueSizeAndTimeout(unsigned short *, unsigned short *);                  // 432
+    virtual IOReturn enablePacketTimestamping(void);                                                  // 433
+    virtual IOReturn disablePacketTimestamping(void);                                                 // 434
+    virtual UInt getPacketTSCounter();                                                                // 435
+
+    // slot 436: getDriverTextLog — this is the controller-wide log getter in
+    // 15.7.5. IO80211ScanManager::commonInit calls this and stores the
+    // result as CCLogStream* in scanIvars[0xe8]. Returning anything other
+    // than a real CCLogStream produced via CCStream::withPipeAndName
+    // → OSDynamicCast<CCLogStream> panics in createReportersAndLegend.
+    virtual void *getDriverTextLog();                                                                 // 436
+    virtual UInt32 selfDiagnosticsReport(int,char const*,UInt);                                       // 437
+
+    // slot 438: getFaultReporterFromDriver — Apple stores this verbatim into
+    // ivars+0x58 as CCFaultReporter*. Must return raw CCFaultReporter
+    // produced via CCFaultReporter::withStreamWorkloop.
+    virtual void *getFaultReporterFromDriver() = 0;                                                   // 438 [PV in Sequoia]
+
+    virtual UInt32 getDataQueueDepth(OSObject *);                                                     // 439
+    virtual bool isAssociatedToMovingNetwork(void);                                                   // 440 [NEW]
+    virtual bool wasDynSARInFailSafeMode(void);                                                       // 441
+    virtual void updateAdvisoryScoresIfNeed(void);                                                    // 442
+    virtual UInt64 getAVCAdvisoryInfo(IO80211InterfaceAVCAdvisory *);                                 // 443
+    virtual SInt32 apple80211_ioctl_get(IO80211SkywalkInterface *,void *, bool, bool);                // 444 [NEW]
+    virtual SInt32 apple80211_ioctl_set(IO80211SkywalkInterface *,void *, bool, bool);                // 445 [NEW]
+    virtual bool attachInterface(OSObject *,IOService *);                                             // 446
+    virtual SInt32 apple80211_ioctl_get(IO80211VirtualInterface *,void *,bool,bool);                  // 447 [NEW]
+    virtual SInt32 apple80211_ioctl_set(IO80211VirtualInterface *,void *,bool,bool);                  // 448 [NEW]
+    virtual void detachInterface(OSObject *,bool);                                                    // 449
+    virtual IO80211VirtualInterface* createVirtualInterface(ether_addr *,UInt);                       // 450
+    virtual bool attachVirtualInterface(IO80211VirtualInterface **,ether_addr *,UInt,bool);           // 451
+    virtual bool detachVirtualInterface(IO80211VirtualInterface *,bool);                              // 452
+    virtual IOReturn enable(IO80211SkywalkInterface *);                                               // 453 [NEW]
+    virtual IOReturn disable(IO80211SkywalkInterface *);                                              // 454 [NEW]
+
+    OSMetaClassDeclareReservedUnused( IO80211Controller,  0);  // slot 455
+    OSMetaClassDeclareReservedUnused( IO80211Controller,  1);  // slot 456
+    OSMetaClassDeclareReservedUnused( IO80211Controller,  2);  // slot 457
+    OSMetaClassDeclareReservedUnused( IO80211Controller,  3);  // slot 458
+    OSMetaClassDeclareReservedUnused( IO80211Controller,  4);  // slot 459
+    OSMetaClassDeclareReservedUnused( IO80211Controller,  5);  // slot 460
+    OSMetaClassDeclareReservedUnused( IO80211Controller,  6);  // slot 461
+    OSMetaClassDeclareReservedUnused( IO80211Controller,  7);  // slot 462
+    OSMetaClassDeclareReservedUnused( IO80211Controller,  8);  // slot 463
+    OSMetaClassDeclareReservedUnused( IO80211Controller,  9);  // slot 464
+    OSMetaClassDeclareReservedUnused( IO80211Controller, 10);  // slot 465
+    OSMetaClassDeclareReservedUnused( IO80211Controller, 11);  // slot 466
+    OSMetaClassDeclareReservedUnused( IO80211Controller, 12);  // slot 467
+    OSMetaClassDeclareReservedUnused( IO80211Controller, 13);  // slot 468
+    OSMetaClassDeclareReservedUnused( IO80211Controller, 14);  // slot 469
+    OSMetaClassDeclareReservedUnused( IO80211Controller, 15);  // slot 470
+
+    virtual void postMessage(UInt,void *,unsigned long,UInt,void *);                                  // 471 [moved here]
+    virtual IOReturn setMulticastList(ether_addr const*, UInt);                                       // 472
 
 protected:
     uint8_t  filler[0x128];

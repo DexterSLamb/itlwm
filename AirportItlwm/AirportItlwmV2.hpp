@@ -116,7 +116,13 @@ public:
     void disableAdapter(IONetworkInterface *netif);
     bool initCCLogs();
     
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia 15.7.5: getWorkQueue is now CONST. Source RE evidence:
+    // 15.7.5-IO80211Controller-vtable.txt slot 398 = __ZNK17IO80211Controller12getWorkQueueEv
+    virtual IO80211WorkQueue *getWorkQueue() const override;
+#else
     virtual IO80211WorkQueue *getWorkQueue() override;
+#endif
     virtual bool requiresExplicitMBufRelease() override {
         return false;
     }
@@ -135,13 +141,12 @@ public:
     
     virtual void *getFaultReporterFromDriver() override;
 
-// Sequoia 新增的 6 个非 PV vmethod (debugStateInit, getPLATFORM_CONFIG,
-// allocIO80211RecursiveLock, getActionFramePoolCapacity, getPostOffice,
-// CreatePostOffice) 在 Apple's IO80211Family.kext IO80211Controller 里有真实
-// 实现 (KDK nm 显示 T 符号). 我们 derived AirportItlwm **不要 override** 这些,
-// 否则 Apple's super::start() 调用时拿到的是我们的 nullptr/空 stub, 内部
-// dereference 失败 -> super::start 返回 false -> 整个 start 在 line 229 退出.
-// 不 override 这些方法不会影响 vtable 计数, 因为非 PV slot 已被父类填充.
+// 15.7.5 ground truth: many vmethods that were thought to be non-PV in the
+// 14.x KDK are now PVs requiring driver implementation, while others
+// (debugStateInit, getPLATFORM_CONFIG, allocIO80211RecursiveLock,
+// getActionFramePoolCapacity, getPostOffice, CreatePostOffice) are
+// removed entirely from 15.7.5. We rely on Apple's parent IO80211Controller
+// implementations for everything except the IOCTL plumbing & log getter.
 
 #if __IO80211_TARGET < __MAC_15_0
     virtual SInt32 apple80211_ioctl(IO80211SkywalkInterface *,unsigned long,void *, bool, bool) override;
@@ -160,19 +165,18 @@ public:
         return false;
     };
 #if __IO80211_TARGET >= __MAC_15_0
-    // Slot 426 in Sequoia is a CCLogStream* getter (NOT handleCardSpecific —
-    // that name was a wrong guess from old itlwm header). Apple's
-    // IO80211ScanManager::commonInit at file 0x18d023 calls
-    // controller->vtable[0xd40] (= slot 426) and stores the return as
-    // CCLogStream* in scanIvars[0xe8]. ScanManager::createReportersAndLegend
-    // later does fLogStream->shouldLog(1), which reads
-    // ((CCLogStream*)x)->ivars[0x90][0x58] — if x is anything but a real
-    // CCLogStream produced by CCStream::withPipeAndName + OSDynamicCast,
-    // those offsets dereference into garbage and panic at corecapture+0x1b22b
-    // (CR2=0x9 from the cmp dword [rax+8]).
-    // We construct driverLogStream in initCCLogs (CCStream::withPipeAndName
-    // on driverLogPipe with stream_type=0 → OSDynamicCast<CCLogStream>).
-    virtual void *getControllerGlobalLogger() override {
+    // 15.7.5 ground truth: slot 436 = __ZN17IO80211Controller16getDriverTextLogEv
+    // is the controller-wide log getter. Apple's IO80211ScanManager::commonInit
+    // calls this and stores the return as CCLogStream* in scanIvars[0xe8].
+    // createReportersAndLegend later does fLogStream->shouldLog(1) which
+    // reads ((CCLogStream*)x)->ivars[0x90][0x58] — if x isn't a real CCLogStream
+    // produced via CCStream::withPipeAndName + OSDynamicCast, those offsets
+    // dereference into garbage (corecapture+0x1b22b panic, CR2=0x9).
+    //
+    // The previous implementation overrode "getControllerGlobalLogger" at
+    // a guessed slot 426, but slot 426 in 15.7.5 is requiresExplicitMBufRelease.
+    // We override getDriverTextLog (slot 436) instead — same purpose, correct slot.
+    virtual void *getDriverTextLog() override {
         return driverLogStream;
     };
 #else

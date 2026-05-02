@@ -548,10 +548,18 @@ bool AirportItlwm::createWorkQueue()
 }
 #endif
 
+#if __IO80211_TARGET >= __MAC_15_0
+// 15.7.5 ground truth: slot 398 = __ZNK17IO80211Controller12getWorkQueueEv (CONST).
+IO80211WorkQueue *AirportItlwm::getWorkQueue() const
+{
+    return _fWorkloop;
+}
+#else
 IO80211WorkQueue *AirportItlwm::getWorkQueue()
 {
     return _fWorkloop;
 }
+#endif
 
 void *AirportItlwm::getFaultReporterFromDriver()
 {
