@@ -128,6 +128,17 @@ public:
     
     virtual void *getFaultReporterFromDriver() override;
 
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia: explicit overrides of new vmethods to ensure derived
+    // vtable matches parent's slot count exactly.
+    virtual void debugStateInit() override {}
+    virtual IOReturn getPLATFORM_CONFIG(IO80211SkywalkInterface *,apple80211_platform_config *) override { return kIOReturnUnsupported; }
+    virtual void *allocIO80211RecursiveLock() override { return nullptr; }
+    virtual UInt getActionFramePoolCapacity() override { return 0; }
+    virtual void *getPostOffice() override { return nullptr; }
+    virtual void CreatePostOffice() override {}
+#endif
+
 #if __IO80211_TARGET < __MAC_15_0
     virtual SInt32 apple80211_ioctl(IO80211SkywalkInterface *,unsigned long,void *, bool, bool) override;
     virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *) override;
