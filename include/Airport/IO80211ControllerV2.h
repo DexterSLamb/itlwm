@@ -311,7 +311,9 @@ public:
     virtual UInt32 hardwareOutputQueueDepth();                                      // slot 406
     virtual SInt32 performCountryCodeOperation(IO80211CountryCodeOp);               // slot 407
     virtual void dataLinkLayerAttachComplete();                                     // slot 408
-    virtual SInt32 enableFeature(IO80211FeatureCode, void*) = 0;                    // slot 409 (Apple 有 impl, 我们还是 PV - subclass override)
+    // slot 409 — Apple 有真实 impl, 我们声明非 PV 以匹配 Apple vtable entry kind.
+    // 我们 derived AirportItlwm 仍可 override 这个方法; 不需 = 0.
+    virtual SInt32 enableFeature(IO80211FeatureCode, void*);                        // slot 409
     virtual IOReturn getDRIVER_VERSION(IO80211SkywalkInterface *,apple80211_version_data *) = 0;     // 410 [PV]
     virtual IOReturn getHARDWARE_VERSION(IO80211SkywalkInterface *,apple80211_version_data *) = 0;   // 411 [PV]
     virtual IOReturn getCARD_CAPABILITIES(IO80211SkywalkInterface *,apple80211_capability_data *) = 0;// 412 [PV]
