@@ -71,7 +71,15 @@ public:
     virtual void setInfraSpecificFrameStats(apple80211_stat_report *,apple80211_infra_specific_stats *) APPLE_KEXT_OVERRIDE;
 #endif
     virtual SInt64 getWmeTxCounters(unsigned long long *) APPLE_KEXT_OVERRIDE;
-#if __IO80211_TARGET < __MAC_15_0
+#if __IO80211_TARGET >= __MAC_15_0
+    // 15.7.5 ground truth: slots 392-394 of IO80211InfraInterface vtable now
+    // own setEnabledBySystem / enabledBySystem / willRoam (they were on
+    // IO80211SkywalkInterface in 14.x). Source:
+    // research/sequoia-port/diff/15.7.5-IO80211InfraInterface-vtable.txt
+    virtual void setEnabledBySystem(bool);
+    virtual bool enabledBySystem(void);
+    virtual bool willRoam(ether_addr *,UInt);
+#else
     virtual void setEnabledBySystem(bool) APPLE_KEXT_OVERRIDE;
     virtual bool enabledBySystem(void) APPLE_KEXT_OVERRIDE;
     virtual bool willRoam(ether_addr *,UInt) APPLE_KEXT_OVERRIDE;
@@ -84,11 +92,15 @@ public:
     virtual int getAssocState(void) APPLE_KEXT_OVERRIDE;
     virtual void *getLQMSummary(apple80211_lqm_summary *) APPLE_KEXT_OVERRIDE;
 #if __IO80211_TARGET >= __MAC_15_0
-    virtual IOReturn setLinkStateInternal(IO80211LinkState,uint,bool,uint);
-#else
+    // 15.7.5 ground truth: slot 448 setLinkStateInternal got a 5th arg
+    // (apple80211_link_changed_event_data&). Slots 449/450 setPoweredOnByUser
+    // and setCurrentBssid are NEW. Source:
+    // research/sequoia-port/diff/15.7.5-IO80211InfraInterface-vtable.txt
     virtual IOReturn setLinkStateInternal(IO80211LinkState,uint,bool,uint,apple80211_link_changed_event_data &);
     virtual void setPoweredOnByUser(bool);
     virtual void setCurrentBssid(ether_addr *);
+#else
+    virtual IOReturn setLinkStateInternal(IO80211LinkState,uint,bool,uint);
 #endif
     virtual void setWCL_ADVISORTY_INFO(apple80211_wcl_advisory_info *);
     virtual void *getWCL_TX_RX_LATENCY(apple80211_wcl_tx_rx_latency *);

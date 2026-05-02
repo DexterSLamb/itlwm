@@ -130,9 +130,15 @@ public:
     virtual void setInfraSpecificFrameStats(apple80211_stat_report *,apple80211_infra_specific_stats *);
 #endif
     virtual SInt64 getWmeTxCounters(unsigned long long *);
+#if __IO80211_TARGET < __MAC_15_0
+    // 15.7.5 ground truth: setEnabledBySystem/enabledBySystem/willRoam moved
+    // up the hierarchy to IO80211InfraInterface (slots 392-394). Keep them
+    // here only for the Sonoma 14.x path. Source:
+    // research/sequoia-port/diff/15.7.5-IO80211InfraInterface-vtable.txt
     virtual void setEnabledBySystem(bool);
     virtual bool enabledBySystem(void);
     virtual bool willRoam(ether_addr *,UInt);
+#endif
     virtual void setPeerManagerLogFlag(UInt,UInt,UInt);
     virtual void setWoWEnabled(bool);
     virtual bool wowEnabled(void);
