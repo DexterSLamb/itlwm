@@ -229,6 +229,22 @@ bool AirportItlwm::start(IOService *provider)
     UInt8 builtIn = 0;
     setProperty("built-in", OSData::withBytes(&builtIn, sizeof(builtIn)));
     setProperty("DriverKitDriver", kOSBooleanFalse);
+
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia: super::start (Apple's IO80211Controller::start) calls
+    // findAndAttachToFaultReporter (KDK 15.7.4 vmaddr 0x112ed5) which calls
+    // slot 434 (getFaultReporterFromDriver) and panics with
+    // "No ivars->_faultReporter" @IO80211Controller.cpp:3288 if it returns NULL.
+    // Original itlwm calls initCCLogs at line 311 (after super::start) — too late.
+    // Initialize CCLogs here so driverFaultReporter is valid when Apple asks.
+    setProperty("trace_step", "01b_pre_initCCLogs_early");
+    if (!initCCLogs()) {
+        setProperty("trace_step", "FAIL_initCCLogs_early");
+        return false;
+    }
+    setProperty("trace_step", "01c_post_initCCLogs_early");
+#endif
+
     setProperty("trace_step", "02_pre_super_start");
     if (!super::start(provider)) {
         setProperty("trace_step", "FAIL_super_start");
@@ -333,6 +349,9 @@ bool AirportItlwm::start(IOService *provider)
     fNetIf->setInterfaceRole(1);
     fNetIf->setInterfaceId(1);
 
+#if __IO80211_TARGET < __MAC_15_0
+    // Sonoma 14.x: super::start doesn't need driverFaultReporter early —
+    // initCCLogs runs here. Sequoia 15.x already ran initCCLogs before super::start.
     if (!initCCLogs()) {
         setProperty("trace_step", "FAIL_initCCLogs");
         XYLog("CCLog init fail\n");
@@ -340,6 +359,7 @@ bool AirportItlwm::start(IOService *provider)
         releaseAll();
         return false;
     }
+#endif
     setProperty("trace_step", "14_post_initCCLogs");
     if (!fNetIf->attach(this)) {
         setProperty("trace_step", "FAIL_skywalkAttach");
