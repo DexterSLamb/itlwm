@@ -156,10 +156,21 @@ public:
 //            XYLog("%s %s\n", __FUNCTION__, convertApple80211IOCTLToString(command));
         return false;
     };
+#if __IO80211_TARGET >= __MAC_15_0
+    // Slot 426 in Sequoia: Apple expects CCLogStream* (zero-arg getter).
+    // Returning NULL kills createIOReporters → start fails. Return 'this' as a
+    // dummy non-NULL OSObject pointer to unblock createIOReporters; next failure
+    // (if Apple actually invokes CCLogStream methods on it) tells us if a real
+    // CCLogStream is required at this stage.
+    virtual void *getControllerGlobalLogger() override {
+        return (void *)this;
+    };
+#else
     virtual SInt32 handleCardSpecific(IO80211SkywalkInterface *,unsigned long,void *,bool) override {
         XYLog("%s\n", __FUNCTION__);
         return 0;
     };
+#endif
     virtual IOReturn getDRIVER_VERSION(IO80211SkywalkInterface *interface,apple80211_version_data *data) override {
         XYLog("%s\n", __FUNCTION__);
         return getDRIVER_VERSION((OSObject *)interface, data);

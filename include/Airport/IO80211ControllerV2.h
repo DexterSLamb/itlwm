@@ -349,7 +349,18 @@ public:
     virtual IO80211FlowQueueLegacy* requestFlowQueue(FlowIdMetadata const*);                          // 423
     virtual void releaseFlowQueue(IO80211FlowQueue *);                                                // 424
     virtual bool getLogPipes(CCPipe**, CCPipe**, CCPipe**);                                           // 425
-    virtual SInt32 handleCardSpecific(IO80211SkywalkInterface *,unsigned long,void *,bool) = 0;       // 426 [PV]
+    // slot 426 [PV] — Apple's IO80211ControllerMonitor::initWithControllerAndProvider
+    // (KDK 15.7.4 vmaddr 0x1f7086) does:
+    //   movq (%r15), %rax     ; controller vptr
+    //   callq *0xd40(%rax)    ; slot = 2 + 0xd40/8 = 426
+    //   movq %rax, 0xdb0(%rcx); store as ivars->fLogger
+    //   testq %rax, %rax
+    //   je → "Unable to get ivars->fLogger" → return NULL → createIOReporters fail → start fail
+    // Apple expects CCLogStream* (the controller-wide log stream), zero-arg.
+    // Sonoma 14.4 had this slot as RESERVED (not called); Sequoia 15.x activated
+    // it. Old itlwm header guessed name "handleCardSpecific" with 4 args returning
+    // SInt32 — that override returned 0 (NULL), breaking Sequoia.
+    virtual void *getControllerGlobalLogger() = 0;                                  // 426 [PV] - CCLogStream*
     virtual void enableFeatureForLoggingFlags(unsigned long long) {}                                  // 427
     virtual IOReturn requestQueueSizeAndTimeout(unsigned short *, unsigned short *) { return kIOReturnIOError; } // 428
     virtual IOReturn enablePacketTimestamping(void) { return kIOReturnUnsupported; }                  // 429
