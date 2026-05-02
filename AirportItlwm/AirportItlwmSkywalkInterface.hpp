@@ -11,11 +11,36 @@
 
 #include <Airport/Apple80211.h>
 
+class AirportItlwm;
+
 class AirportItlwmSkywalkInterface : public IO80211InfraProtocol {
     OSDeclareDefaultStructors(AirportItlwmSkywalkInterface)
-    
+
 public:
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia 15.7.5 vtable slot 414 = init(IOService*). Apple's
+    // IO80211SkywalkInterface::init(IOService*) is what super::start
+    // expects to be invoked first. Don't shadow with a custom (this,
+    // controller) form; instead, split into init() (zero-arg, calls
+    // parent init(IOService*) without the controller) and bindController()
+    // for setting the back-pointer.
+    virtual bool init() override;
+    bool bindController(AirportItlwm *controller);
+
+    // Sequoia 15.7.5 slot 79 (IOSkywalkNetworkInterface::setInterfaceEnable):
+    // Override so that when Apple flips the interface to enabled, we also
+    // report a link-status update and let the InfraInterface base know.
+    virtual SInt32 setInterfaceEnable(bool enabled) override;
+
+    // Sequoia 15.7.5 IOSkywalkEthernetInterface::getInterfaceSubFamily:
+    // Apple's IOSkywalkNetworkBSDClient matching keys off the subfamily
+    // value. WiFi infra interfaces report 3 (IFNET_SUBFAMILY_WIFI per
+    // BSD net/if.h). Cast to void* to match the existing virtual signature
+    // (Apple returns the value in %rax, the caller compares it as ulong).
+    virtual void *getInterfaceSubFamily(void) override;
+#else
     virtual bool init(IOService *) override;
+#endif
 //    virtual ifnet_t getBSDInterface(void) override;
     
     void associateSSID(uint8_t *ssid, uint32_t ssid_len, const struct ether_addr &bssid, uint32_t authtype_lower, uint32_t authtype_upper, uint8_t *key, uint32_t key_len, int key_index);

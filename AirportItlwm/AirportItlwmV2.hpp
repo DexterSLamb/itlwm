@@ -28,6 +28,11 @@
 #include "Airport/CCDataStream.h"
 #include "Airport/CCFaultReporter.h"
 #include "Airport/CCLogStream.h"
+#if __IO80211_TARGET >= __MAC_15_0
+#include "Airport/IOSkywalkPacketBufferPool.h"
+#include <IOKit/skywalk/IOSkywalkTxSubmissionQueue.h>
+#include <IOKit/skywalk/IOSkywalkRxCompletionQueue.h>
+#endif
 
 enum
 {
@@ -298,9 +303,20 @@ public:
     // getFaultReporterFromDriver vtable slot expects raw CCFaultReporter*.
     // Created via CCFaultReporter::withStreamWorkloop(CCDataStream, IOWorkLoop).
     CCFaultReporter *ccFaultReporter;
-    // Sequoia: Apple's getControllerGlobalLogger (slot 426) must return a real
-    // CCLogStream* obtained via CCStream::withPipeAndName + OSDynamicCast<CCLogStream>.
+    // Sequoia 15.7.5 slot 436 getDriverTextLog must return a real CCLogStream*
+    // obtained via CCStream::withPipeAndName + OSDynamicCast<CCLogStream>.
     CCLogStream *driverLogStream;
+
+    // Sequoia 15.x: Skywalk TX/RX pool + queue setup is REQUIRED for the
+    // BSD ifnet to be created via IOSkywalkNetworkBSDClient. Allocated in
+    // start(), released in releaseAll(). Stub callbacks (skywalkTxAction /
+    // skywalkRxAction) just return count — actual datapath remains the
+    // legacy IOEthernetInterface path; the pools/queues exist solely to
+    // satisfy the framework's registerEthernetInterface contract.
+    IOSkywalkPacketBufferPool   *fTxPool;
+    IOSkywalkPacketBufferPool   *fRxPool;
+    IOSkywalkTxSubmissionQueue  *fTxQueue;
+    IOSkywalkRxCompletionQueue  *fRxQueue;
 #endif
 };
 

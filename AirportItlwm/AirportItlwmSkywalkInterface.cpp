@@ -264,6 +264,59 @@ void AirportItlwmSkywalkInterface::setGTK(const u_int8_t *gtk, size_t key_len, u
     }
 }
 
+#if __IO80211_TARGET >= __MAC_15_0
+// Sequoia 15.7.5: split init(IOService*) into init() + bindController(...)
+// per the new vtable layout (slot 414 = init(IOService*) on the parent).
+// The driver calls init() via Apple's framework path, then bindController()
+// from AirportItlwm::start() to wire up the back-pointer.
+bool AirportItlwmSkywalkInterface::
+init()
+{
+    bool ret = IO80211InfraInterface::init();
+    if (!ret) {
+        XYLog("%s IO80211InfraInterface init failed\n", __PRETTY_FUNCTION__);
+        return false;
+    }
+    instance     = NULL;
+    fHalService  = NULL;
+    scanSource   = NULL;
+    return true;
+}
+
+bool AirportItlwmSkywalkInterface::
+bindController(AirportItlwm *controller)
+{
+    if (!controller) return false;
+    instance     = controller;
+    fHalService  = controller->fHalService;
+    scanSource   = controller->scanSource;
+    return true;
+}
+
+// Sequoia: override setInterfaceEnable to push a link-status update when
+// the framework flips us on. This is a no-op when the parent returns
+// non-zero (failure). reportLinkStatus(3, 0x80) signals UP+ACTIVE on
+// IOSkywalkNetworkInterface; setLinkState(kIO80211NetworkLinkUp,...)
+// notifies the InfraInterface chain.
+SInt32 AirportItlwmSkywalkInterface::
+setInterfaceEnable(bool enabled)
+{
+    SInt32 ret = IO80211InfraInterface::setInterfaceEnable(enabled);
+    if (ret == 0 && enabled) {
+        reportLinkStatus(3, 0x80);
+        IO80211InfraInterface::setLinkState(kIO80211NetworkLinkUp, 0);
+    }
+    return ret;
+}
+
+// Sequoia: WiFi infra subfamily = 3 (IFNET_SUBFAMILY_WIFI). Cast to void*
+// to keep the polymorphic return type.
+void *AirportItlwmSkywalkInterface::
+getInterfaceSubFamily(void)
+{
+    return (void *)(uintptr_t)3;
+}
+#else
 bool AirportItlwmSkywalkInterface::
 init(IOService *provider)
 {
@@ -279,6 +332,7 @@ init(IOService *provider)
     this->scanSource = instance->scanSource;
     return ret;
 }
+#endif
 
 //ifnet_t AirportItlwmSkywalkInterface::
 //getBSDInterface()

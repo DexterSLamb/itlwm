@@ -22,6 +22,31 @@ OSDefineMetaClassAndStructors(CTimeout, OSObject)
 IO80211WorkQueue *_fWorkloop;
 IOCommandGate *_fCommandGate;
 
+#if __IO80211_TARGET >= __MAC_15_0
+// Stub Skywalk TX submission action: required by withPool() but the
+// actual datapath remains the legacy IOEthernetInterface path. Returning
+// kIOReturnSuccess (0) signals "we processed all `count` packets". The
+// queue still drains correctly because Apple's skywalk dispatcher
+// recycles packets after this callback regardless of return value.
+static IOReturn
+skywalkTxAction(OSObject *owner, IOSkywalkTxSubmissionQueue *queue,
+                const IOSkywalkPacket **packets, UInt32 count, void *refCon)
+{
+    (void)owner; (void)queue; (void)packets; (void)refCon;
+    return kIOReturnSuccess;
+}
+
+// Stub Skywalk RX completion action: completion notification only —
+// actual RX injection still goes through the legacy if_input path.
+static IOReturn
+skywalkRxAction(OSObject *owner, IOSkywalkRxCompletionQueue *queue,
+                IOSkywalkPacket **packets, UInt32 count, void *refCon)
+{
+    (void)owner; (void)queue; (void)packets; (void)refCon;
+    return kIOReturnSuccess;
+}
+#endif
+
 void AirportItlwm::releaseAll()
 {
     OSSafeReleaseNULL(driverLogPipe);
@@ -31,6 +56,10 @@ void AirportItlwm::releaseAll()
 #if __IO80211_TARGET >= __MAC_15_0
     OSSafeReleaseNULL(ccFaultReporter);
     OSSafeReleaseNULL(driverLogStream);
+    OSSafeReleaseNULL(fTxQueue);
+    OSSafeReleaseNULL(fRxQueue);
+    OSSafeReleaseNULL(fTxPool);
+    OSSafeReleaseNULL(fRxPool);
 #endif
     if (fHalService) {
         fHalService->release();
@@ -396,6 +425,20 @@ bool AirportItlwm::start(IOService *provider)
 
     setProperty("trace_step", "12_pre_newSkywalkInterface");
     fNetIf = new AirportItlwmSkywalkInterface;
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia 15.7.5: split init() per new vtable — Apple's
+    // IO80211SkywalkInterface::init at slot 414 takes (IOService*) but our
+    // own init() form is the framework-friendly path; bind the controller
+    // afterwards so all subsequent ivars are wired before super::start.
+    if (!((AirportItlwmSkywalkInterface *)fNetIf)->init() ||
+        !((AirportItlwmSkywalkInterface *)fNetIf)->bindController(this)) {
+        setProperty("trace_step", "FAIL_skywalkInit");
+        XYLog("Skywalk interface init fail\n");
+        super::stop(provider);
+        releaseAll();
+        return false;
+    }
+#else
     if (!fNetIf->init(this)) {
         setProperty("trace_step", "FAIL_skywalkInit");
         XYLog("Skywalk interface init fail\n");
@@ -403,6 +446,7 @@ bool AirportItlwm::start(IOService *provider)
         releaseAll();
         return false;
     }
+#endif
     setProperty("trace_step", "13_post_skywalkInit");
     fNetIf->setInterfaceRole(1);
     fNetIf->setInterfaceId(1);
@@ -445,14 +489,7 @@ bool AirportItlwm::start(IOService *provider)
     setProperty("trace_step", "17_post_IONCAttachInterface");
     memset(&registInfo, 0, sizeof(registInfo));
     if (!fNetIf->initRegistrationInfo(&registInfo, 1, sizeof(registInfo))) {
-        setProperty("trace_step", "FAIL_initRegistrationInfo_1");
-        XYLog("initRegistrationInfo fail\n");
-        super::stop(provider);
-        releaseAll();
-        return false;
-    }
-    if (!fNetIf->initRegistrationInfo(&registInfo, 1, sizeof(registInfo))) {
-        setProperty("trace_step", "FAIL_initRegistrationInfo_2");
+        setProperty("trace_step", "FAIL_initRegistrationInfo");
         XYLog("initRegistrationInfo fail\n");
         super::stop(provider);
         releaseAll();
@@ -467,24 +504,89 @@ bool AirportItlwm::start(IOService *provider)
     fNetIf->mExpansionData2->fRegistrationInfo = (struct IOSkywalkEthernetInterface::RegistrationInfo *)IOMalloc(sizeof(struct IOSkywalkEthernetInterface::RegistrationInfo));
     memcpy(fNetIf->mExpansionData->fRegistrationInfo, &registInfo, sizeof(registInfo));
     memcpy(fNetIf->mExpansionData2->fRegistrationInfo, &registInfo, sizeof(registInfo));
-#else
-    // Sequoia 15.x: upstream IOSkywalkEthernetInterface header has the wrong
-    // class size (assumes 0x120 ala Tahoe 26; Sequoia is 0x110, mExpansionData2
-    // at offset 0x100 not 0x108). Manual writes corrupt adjacent ivars
-    // (PeerManager-related slot), causing IO80211PeerManager::initWithInterface
-    // to dereference NULL+0x38 (OSObject NULL release) → kernel panic.
-    // initRegistrationInfo (called above) already populated both expansion
-    // slots through the framework — manual writes are redundant AND
-    // structurally harmful on Sequoia. Drop them.
-    // Confirmed by rdmitry0911/itlwm Tahoe fork commit message: "Manual
-    // allocation was removed because it wrote to the WRONG offsets when our
-    // class size was 0x10 too small".
-#endif
     if (fNetIf->getInterfaceRole() == 1)
         fNetIf->deferBSDAttach(true);
     setProperty("trace_step", "19_pre_skywalkStart");
     fNetIf->start(this);
     setProperty("trace_step", "20_post_skywalkStart");
+#else
+    // Sequoia 15.x: build the full Skywalk packet path (TX/RX pools + queues +
+    // registerEthernetInterface) so IOSkywalkNetworkBSDClient can match and
+    // create the BSD ifnet via the new logical-link route. The pools/queues
+    // are stubbed (callbacks just return success) — actual datapath remains
+    // the legacy IOEthernetInterface path; the Skywalk plumbing exists only
+    // to satisfy the framework contract.
+    //
+    // Class sizes from research/sequoia-port/diff/15.7.5-class-sizes.txt:
+    //   IOSkywalkEthernetInterface = 0x110
+    //   IO80211SkywalkInterface    = 0x118
+    // So mExpansionData2 sits at +0x108 (verified by static_assert in header).
+    // initRegistrationInfo (called above) populates both expansion slots
+    // through the framework — DO NOT manually IOMalloc them like Sonoma.
+    {
+        IOSkywalkPacketBufferPool::PoolOptions poolOpts = {};
+        poolOpts.packetCount = 256;
+        poolOpts.bufferCount = 256;
+        poolOpts.bufferSize  = 2048;
+        poolOpts.maxBuffersPerPacket = 1;
+
+        fTxPool = IOSkywalkPacketBufferPool::withName("AirportItlwm-TX", fNetIf, 0, &poolOpts);
+        fRxPool = IOSkywalkPacketBufferPool::withName("AirportItlwm-RX", fNetIf, 0, &poolOpts);
+        if (!fTxPool || !fRxPool) {
+            setProperty("trace_step", "FAIL_skywalkPool");
+            XYLog("Skywalk pool create fail TX=%p RX=%p\n", fTxPool, fRxPool);
+            super::stop(provider);
+            releaseAll();
+            return false;
+        }
+    }
+    setProperty("trace_step", "18b_post_pools");
+
+    fTxQueue = IOSkywalkTxSubmissionQueue::withPool(fTxPool, 256, 0, this,
+                                                    skywalkTxAction, NULL, 0);
+    fRxQueue = IOSkywalkRxCompletionQueue::withPool(fRxPool, 256, 0, this,
+                                                    skywalkRxAction, NULL, 0);
+    if (!fTxQueue || !fRxQueue) {
+        setProperty("trace_step", "FAIL_skywalkQueue");
+        XYLog("Skywalk queue create fail TX=%p RX=%p\n", fTxQueue, fRxQueue);
+        super::stop(provider);
+        releaseAll();
+        return false;
+    }
+    setProperty("trace_step", "18c_post_queues");
+
+    {
+        IOSkywalkPacketQueue *queues[] = {
+            (IOSkywalkPacketQueue *)fTxQueue,
+            (IOSkywalkPacketQueue *)fRxQueue,
+        };
+        // 15.7.5 ground truth: registerEthernetInterface returns IOReturn
+        // (kIOReturnSuccess = 0). The header was previously bool, inverting
+        // truthiness — fixed in commit 86e3adb.
+        IOReturn regRet = fNetIf->registerEthernetInterface(
+            (const IOSkywalkEthernetInterface::RegistrationInfo *)&registInfo,
+            queues, 2, fTxPool, fRxPool, 0);
+        if (regRet != kIOReturnSuccess) {
+            setProperty("trace_step", "FAIL_registerEthernetInterface");
+            XYLog("registerEthernetInterface fail ret=0x%x\n", regRet);
+            super::stop(provider);
+            releaseAll();
+            return false;
+        }
+    }
+    setProperty("trace_step", "18d_post_registerEthernetInterface");
+
+    setProperty("trace_step", "19_pre_skywalkStart");
+    fNetIf->start(this);
+    setProperty("trace_step", "20_post_skywalkStart");
+
+    // Trigger BSD ifnet publication via IOSkywalkNetworkBSDClient matching.
+    // deferBSDAttach(false) clears the IODeferBSDAttach property and
+    // re-registers the service so BSDClient can create the nexus channel
+    // and BSD ifnet.
+    fNetIf->deferBSDAttach(false);
+    setProperty("trace_step", "20b_post_deferBSDAttach_false");
+#endif
 
     setLinkStatus(kIONetworkLinkValid);
     if (TAILQ_EMPTY(&fHalService->get80211Controller()->ic_ess))
