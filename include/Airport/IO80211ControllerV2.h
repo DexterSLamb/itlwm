@@ -135,6 +135,12 @@ extern IOCTL_FUNC gSetHandlerTable[];
 
 class IO80211InterfaceAVCAdvisory;
 
+// Sequoia 15.7+ adds new vtable methods that take these types.
+// We don't need to know the layout—forward declarations only,
+// since IO80211Controller declares them as method parameters
+// (compiles against the pointer type, not the full struct).
+struct apple80211_platform_config;
+
 #if __IO80211_TARGET < __MAC_15_0
 // =============================================================================
 // Sonoma 14.4 path - 原始 class 定义, 严格保留 Sonoma 14.x 兼容性, 不要改这块
