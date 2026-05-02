@@ -50,7 +50,9 @@ jobs:
           GIT_COMMIT=_${SHORT_SHA} \
           GCC_PREPROCESSOR_DEFINITIONS='$(inherited) __IO80211_TARGET=__MAC_15_0' \
           CONFIGURATION_BUILD_DIR='$(SYMROOT)/$(CONFIGURATION)/Sequoia15' \
-          | xcpretty && exit ${PIPESTATUS[0]}
+          2>&1 | tee /tmp/seq-build.log | grep -E "error:|warning:|note:|FAILED|^/Users.*:|Compiling|Linking" | head -200
+        # Re-emit failure if any
+        ! grep -q "BUILD FAILED" /tmp/seq-build.log
 
     - name: Pack Artifacts
       run: |
