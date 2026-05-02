@@ -408,6 +408,7 @@ IO80211WorkQueue *AirportItlwm::getWorkQueue()
     return _fWorkloop;
 }
 
+#if __IO80211_TARGET < __MAC_15_0
 void *AirportItlwm::getFaultReporterFromDriver()
 {
     return driverFaultReporter;
@@ -430,6 +431,7 @@ IOReturn AirportItlwm::disable(IO80211SkywalkInterface *netif)
     setLinkStatus(kIONetworkLinkValid);
     return kIOReturnSuccess;
 }
+#endif
 
 bool AirportItlwm::configureInterface(IONetworkInterface *netif)
 {
@@ -885,6 +887,7 @@ setPOWER(OSObject *object,
     return kIOReturnSuccess;
 }
 
+#if __IO80211_TARGET < __MAC_15_0
 SInt32 AirportItlwm::apple80211_ioctl(IO80211SkywalkInterface *interface,unsigned long cmd,void *data, bool b1, bool b2)
 {
     if (!ml_at_interrupt_context())
@@ -905,6 +908,7 @@ SInt32 AirportItlwm::apple80211SkywalkRequest(UInt request,int cmd,IO80211Skywal
         XYLog("%s 2 cmd: %s request: %d\n", __FUNCTION__, convertApple80211IOCTLToString(cmd), request);
     return kIOReturnUnsupported;
 }
+#endif
 
 IOReturn AirportItlwm::enableAdapter(IONetworkInterface *netif)
 {

@@ -70,8 +70,10 @@ public:
     virtual IOService* probe(IOService* provider, SInt32* score) override;
     virtual bool start(IOService *provider) override;
     virtual void stop(IOService *provider) override;
+#if __IO80211_TARGET < __MAC_15_0
     virtual IOReturn enable(IO80211SkywalkInterface *netif) override;
     virtual IOReturn disable(IO80211SkywalkInterface *netif) override;
+#endif
     virtual IOReturn setHardwareAddress(const void *addr, UInt32 addrBytes) override;
     virtual IOReturn getHardwareAddress(IOEthernetAddress* addrP) override;
     virtual IOReturn getPacketFilters(const OSSymbol *group, UInt32 *filters) const override;
@@ -124,11 +126,13 @@ public:
     
     virtual bool getLogPipes(CCPipe**, CCPipe**, CCPipe**) override;
     
+#if __IO80211_TARGET < __MAC_15_0
     virtual void *getFaultReporterFromDriver() override;
-    
+
     virtual SInt32 apple80211_ioctl(IO80211SkywalkInterface *,unsigned long,void *, bool, bool) override;
     virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *) override;
     virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *,void *) override;
+#endif
 
     bool createMediumTables(const IONetworkMedium **primary);
     void releaseAll();
