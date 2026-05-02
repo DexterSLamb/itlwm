@@ -128,16 +128,13 @@ public:
     
     virtual void *getFaultReporterFromDriver() override;
 
-#if __IO80211_TARGET >= __MAC_15_0
-    // Sequoia: explicit overrides of new vmethods to ensure derived
-    // vtable matches parent's slot count exactly.
-    virtual void debugStateInit() override {}
-    virtual IOReturn getPLATFORM_CONFIG(IO80211SkywalkInterface *,apple80211_platform_config *) override { return kIOReturnUnsupported; }
-    virtual void *allocIO80211RecursiveLock() override { return nullptr; }
-    virtual UInt getActionFramePoolCapacity() override { return 0; }
-    virtual void *getPostOffice() override { return nullptr; }
-    virtual void CreatePostOffice() override {}
-#endif
+// Sequoia 新增的 6 个非 PV vmethod (debugStateInit, getPLATFORM_CONFIG,
+// allocIO80211RecursiveLock, getActionFramePoolCapacity, getPostOffice,
+// CreatePostOffice) 在 Apple's IO80211Family.kext IO80211Controller 里有真实
+// 实现 (KDK nm 显示 T 符号). 我们 derived AirportItlwm **不要 override** 这些,
+// 否则 Apple's super::start() 调用时拿到的是我们的 nullptr/空 stub, 内部
+// dereference 失败 -> super::start 返回 false -> 整个 start 在 line 229 退出.
+// 不 override 这些方法不会影响 vtable 计数, 因为非 PV slot 已被父类填充.
 
 #if __IO80211_TARGET < __MAC_15_0
     virtual SInt32 apple80211_ioctl(IO80211SkywalkInterface *,unsigned long,void *, bool, bool) override;
