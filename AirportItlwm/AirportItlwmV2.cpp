@@ -29,7 +29,7 @@ void AirportItlwm::releaseAll()
     OSSafeReleaseNULL(driverSnapshotsPipe);
     OSSafeReleaseNULL(driverFaultReporter);
 #if __IO80211_TARGET >= __MAC_15_0
-    OSSafeReleaseNULL(io80211FaultReporter);
+    OSSafeReleaseNULL(ccFaultReporter);
     OSSafeReleaseNULL(driverLogStream);
 #endif
     if (fHalService) {
@@ -250,30 +250,26 @@ initCCLogs()
     }
     XYLog("%s driverLogStreamRet %d\n", __FUNCTION__, driverLogStream != NULL);
 
-    io80211FaultReporter = NULL;
+    // 15.7.5 actual binary RE: IO80211FaultReporter class no longer exists;
+    // ground truth nm of BootKC has no __ZTV20IO80211FaultReporter symbol.
+    // Apple's IO80211Controller::findAndAttachToFaultReporter stores our
+    // getFaultReporterFromDriver() return verbatim into ivars+0x58 as
+    // CCFaultReporter*. PeerManager/ScanManager later call
+    // CCFaultReporter::registerCallbacks via vtable[0x120] on it.
+    // Just return the raw CCFaultReporter — no IO80211FaultReporter wrapper.
+    OSSafeReleaseNULL(ccFaultReporter);
     if (driverFaultReporter) {
         CCDataStream *fdStream = OSDynamicCast(CCDataStream, driverFaultReporter);
         if (fdStream) {
-            // Dedicated workloop for the fault reporter (matches Apple's
-            // AppleBCMWLANLogger pattern). Using the driver's shared
-            // _fWorkloop is dangerous because CCFaultReporter retains and
-            // schedules callbacks on it.
             IOWorkLoop *frWorkloop = IOWorkLoop::workLoop();
             if (frWorkloop) {
-                CCFaultReporter *ccfr = CCFaultReporter::withStreamWorkloop(fdStream, frWorkloop);
-                if (ccfr) {
-                    // allocWithParams takes OWNERSHIP of ccfr (does NOT
-                    // retain). Releasing ccfr here causes use-after-free
-                    // when ScanManager/PeerManager later call
-                    // CCFaultReporter::registerCallbacks via the wrapper.
-                    io80211FaultReporter = IO80211FaultReporter::allocWithParams(ccfr);
-                }
+                ccFaultReporter = CCFaultReporter::withStreamWorkloop(fdStream, frWorkloop);
                 frWorkloop->release();  // CCFaultReporter retains workloop
             }
         }
     }
-    XYLog("%s io80211FaultReporterRet %d\n", __FUNCTION__, io80211FaultReporter != NULL);
-    return driverLogPipe && driverDataPathPipe && driverSnapshotsPipe && driverFaultReporter && io80211FaultReporter && driverLogStream;
+    XYLog("%s ccFaultReporterRet %d\n", __FUNCTION__, ccFaultReporter != NULL);
+    return driverLogPipe && driverDataPathPipe && driverSnapshotsPipe && driverFaultReporter && ccFaultReporter && driverLogStream;
 #else
     return driverLogPipe && driverDataPathPipe && driverSnapshotsPipe && driverFaultReporter;
 #endif
@@ -560,10 +556,11 @@ IO80211WorkQueue *AirportItlwm::getWorkQueue()
 void *AirportItlwm::getFaultReporterFromDriver()
 {
 #if __IO80211_TARGET >= __MAC_15_0
-    // Apple stores this in IO80211Controller ivars+0x58, then PeerManager
-    // calls CCFaultReporter::registerCallbacks via vtable[0x120]. Must be
-    // an IO80211FaultReporter (which is_a CCFaultReporter), not a CCStream.
-    return io80211FaultReporter;
+    // Sequoia 15.7.5 actual binary RE: IO80211FaultReporter class doesn't
+    // exist. Apple stores our return verbatim in controller ivars+0x58 as
+    // CCFaultReporter*. PeerManager invokes vtable[0x120] = registerCallbacks
+    // on it directly.
+    return ccFaultReporter;
 #else
     return driverFaultReporter;
 #endif
