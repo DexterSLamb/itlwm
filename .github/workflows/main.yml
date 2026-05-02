@@ -50,8 +50,12 @@ jobs:
           GIT_COMMIT=_${SHORT_SHA} \
           GCC_PREPROCESSOR_DEFINITIONS='$(inherited) __IO80211_TARGET=__MAC_15_0' \
           CONFIGURATION_BUILD_DIR='$(SYMROOT)/$(CONFIGURATION)/Sequoia15' \
-          2>&1 | tee /tmp/seq-build.log | grep -E "error:|warning:|note:|FAILED|^/Users.*:|Compiling|Linking" | head -200
-        # Re-emit failure if any
+          2>&1 | tee /tmp/seq-build.log
+        # Print the last error block for visibility, then re-emit failure
+        echo "===== LAST 50 LINES BEFORE FAILURE ====="
+        grep -B 50 "BUILD FAILED" /tmp/seq-build.log | tail -100 || true
+        echo "===== ALL ERROR LINES ====="
+        grep -E " error:" /tmp/seq-build.log | head -30 || true
         ! grep -q "BUILD FAILED" /tmp/seq-build.log
 
     - name: Pack Artifacts
