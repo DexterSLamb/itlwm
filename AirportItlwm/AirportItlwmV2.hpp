@@ -137,9 +137,6 @@ public:
     virtual UInt getActionFramePoolCapacity() override { return 0; }
     virtual void *getPostOffice() override { return nullptr; }
     virtual void CreatePostOffice() override {}
-    // Padding vmethod — kxld reported derived 462 vs parent 463; trying to add
-    // 1 slot to see if count flips.
-    virtual void _airportitlwm_seq_pad() {}
 #endif
 
 #if __IO80211_TARGET < __MAC_15_0

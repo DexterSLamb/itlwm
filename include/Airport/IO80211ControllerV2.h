@@ -299,6 +299,19 @@ public:
     virtual IOReturn setPromiscuousMode(bool active) APPLE_KEXT_OVERRIDE;           // slot 362
 
     // --- IO80211Controller's own new vmethods, 严格按 Sequoia slot 顺序声明 ---
+    //
+    // SLOT 396 占位:
+    // KDK 15.7.4 IO80211Family 反编译数据显示 Apple 的 IO80211Controller vtable
+    // slot 396 = ___cxa_pure_virtual, 即 Apple 在 IOEthernetController (or some
+    // base) 加了一个新 pure virtual, KDK 自带的 IONetworkingFamily.kext (15.7.4)
+    // 还没 reflect 这个改动 (slot 395 RESERVED31 之后是 null padding). MacKernelSDK
+    // 的 IOEthernetController.h 同样比 Apple 少 1 个 vmethod, 导致我们 derived
+    // AirportItlwm 的 vtable 整体 shift -1, OC 的 OCAK vtable patcher 在 RESERVED1
+    // 等位置定位失败 (报 "Invalid Parameter" / "Failed to patch symbol").
+    // 在 IO80211Controller 第一个 own vmethod 之前显式占 1 个 slot, 让后续所有 slot
+    // 对齐到 Apple ground truth (createWorkQueue=397, ..., RESERVED0=448, ...,
+    // setMulticastList=464). 方法名仅作 placeholder, 不会被任何 caller 调用.
+    virtual void _seq_eth_ext_slot396_placeholder() {}                              // slot 396 [Sequoia ABI alignment]
     virtual bool createWorkQueue();                                                 // slot 397
     virtual void debugStateInit();                                                  // slot 398 [NEW IN SEQUOIA]
     virtual IO80211WorkQueue *getWorkQueue();                                       // slot 399
