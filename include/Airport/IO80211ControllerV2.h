@@ -312,7 +312,13 @@ public:
     // 对齐到 Apple ground truth (createWorkQueue=397, ..., RESERVED0=448, ...,
     // setMulticastList=464). 方法名仅作 placeholder, 不会被任何 caller 调用.
     virtual void _seq_eth_ext_slot396_placeholder() {}                              // slot 396 [Sequoia ABI alignment]
-    virtual bool createWorkQueue();                                                 // slot 397
+    // Sequoia ABI: Apple's IO80211Controller::start (KDK 15.7.4 vmaddr 0x112c6c)
+    // calls slot 397 via `callq *0xc68(%rax)` and treats %rax return as
+    // IO80211WorkQueue*, then passes it to IO80211CommandGate::allocWithParams
+    // as the workqueue arg. Returning bool here means high 56 bits of %rax are
+    // garbage, making allocWithParams fail with a junk pointer -> super::start
+    // silently returns false. Must return IO80211WorkQueue*.
+    virtual IO80211WorkQueue *createWorkQueue();                                    // slot 397
     virtual void debugStateInit();                                                  // slot 398 [NEW IN SEQUOIA]
     virtual IO80211WorkQueue *getWorkQueue();                                       // slot 399
     virtual void requestPacketTx(void*, UInt);                                      // slot 400

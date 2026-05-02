@@ -437,11 +437,21 @@ void AirportItlwm::free()
     super::free();
 }
 
+#if __IO80211_TARGET >= __MAC_15_0
+IO80211WorkQueue *AirportItlwm::createWorkQueue()
+{
+    if (_fWorkloop == nullptr) {
+        _fWorkloop = IO80211WorkQueue::workQueue();
+    }
+    return _fWorkloop;
+}
+#else
 bool AirportItlwm::createWorkQueue()
 {
     XYLog("%s %d\n", __FUNCTION__, _fWorkloop != 0);
     return _fWorkloop != 0;
 }
+#endif
 
 IO80211WorkQueue *AirportItlwm::getWorkQueue()
 {

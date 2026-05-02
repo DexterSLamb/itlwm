@@ -84,7 +84,11 @@ public:
     virtual const OSString * newVendorString() const override;
     virtual const OSString * newModelString() const override;
     virtual IOReturn selectMedium(const IONetworkMedium *medium) override;
+#if __IO80211_TARGET >= __MAC_15_0
+    virtual IO80211WorkQueue *createWorkQueue() override;
+#else
     virtual bool createWorkQueue() override;
+#endif
     virtual IONetworkInterface * createInterface() override;
     virtual bool configureInterface(IONetworkInterface *netif) override;
     virtual UInt32 outputPacket(mbuf_t, void * param) override;
