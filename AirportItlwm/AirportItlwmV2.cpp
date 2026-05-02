@@ -222,63 +222,84 @@ bool AirportItlwm::start(IOService *provider)
     XYLog("%s\n", __PRETTY_FUNCTION__);
     struct IOSkywalkEthernetInterface::RegistrationInfo registInfo;
     int boot_value = 0;
-    
+
+    // Boot trace via setProperty (Sequoia 抑制 IOLog, 用 ioreg 抓行号)
+    setProperty("trace_step", "01_entered");
+
     UInt8 builtIn = 0;
     setProperty("built-in", OSData::withBytes(&builtIn, sizeof(builtIn)));
     setProperty("DriverKitDriver", kOSBooleanFalse);
+    setProperty("trace_step", "02_pre_super_start");
     if (!super::start(provider)) {
+        setProperty("trace_step", "FAIL_super_start");
         return false;
     }
+    setProperty("trace_step", "03_post_super_start");
     pciNub->setBusMasterEnable(true);
     pciNub->setIOEnable(true);
     pciNub->setMemoryEnable(true);
     pciNub->configWrite8(0x41, 0);
+    setProperty("trace_step", "04_pre_requestPowerDomain");
     if (pciNub->requestPowerDomainState(kIOPMPowerOn,
                                         (IOPowerConnection *) getParentEntry(gIOPowerPlane), IOPMLowestState) != IOPMNoErr) {
+        setProperty("trace_step", "FAIL_requestPowerDomain");
         super::stop(provider);
         return false;
     }
+    setProperty("trace_step", "05_pre_initPCIPowerManagment");
     if (initPCIPowerManagment(pciNub) == false) {
+        setProperty("trace_step", "FAIL_initPCIPowerManagment");
         super::stop(pciNub);
         return false;
     }
+    setProperty("trace_step", "06_post_initPCIPowerManagment");
     if (_fWorkloop == NULL) {
+        setProperty("trace_step", "FAIL_no_workloop");
         XYLog("No _fWorkloop!!\n");
         super::stop(pciNub);
         releaseAll();
         return false;
     }
+    setProperty("trace_step", "07_pre_commandGate");
     _fCommandGate = IOCommandGate::commandGate(this, (IOCommandGate::Action)AirportItlwm::tsleepHandler);
     if (_fCommandGate == 0) {
+        setProperty("trace_step", "FAIL_no_commandGate");
         XYLog("No command gate!!\n");
         super::stop(pciNub);
         releaseAll();
         return false;
     }
     _fWorkloop->addEventSource(_fCommandGate);
+    setProperty("trace_step", "08_pre_createMediumTables");
     const IONetworkMedium *primaryMedium;
     if (!createMediumTables(&primaryMedium) ||
         !setCurrentMedium(primaryMedium) || !setSelectedMedium(primaryMedium)) {
+        setProperty("trace_step", "FAIL_createMediumTables");
         XYLog("setup medium fail\n");
         releaseAll();
         return false;
     }
+    setProperty("trace_step", "09_pre_initWithController");
     fHalService->initWithController(this, _fWorkloop, _fCommandGate);
     fHalService->get80211Controller()->ic_event_handler = eventHandler;
-    
+
     if (PE_parse_boot_argn("-novht", &boot_value, sizeof(boot_value)))
         fHalService->get80211Controller()->ic_userflags |= IEEE80211_F_NOVHT;
     if (PE_parse_boot_argn("-noht40", &boot_value, sizeof(boot_value)))
         fHalService->get80211Controller()->ic_userflags |= IEEE80211_F_NOHT40;
-    
+
+    setProperty("trace_step", "10_pre_halAttach");
     if (!fHalService->attach(pciNub)) {
+        setProperty("trace_step", "FAIL_halAttach");
         XYLog("attach fail\n");
         super::stop(pciNub);
         releaseAll();
         return false;
     }
+    setProperty("trace_step", "11_post_halAttach");
     fWatchdogWorkLoop = IOWorkLoop::workLoop();
     if (fWatchdogWorkLoop == NULL) {
+        setProperty("trace_step", "FAIL_watchdogWorkloop");
         XYLog("init watchdog workloop fail\n");
         fHalService->detach(pciNub);
         super::stop(pciNub);
@@ -287,6 +308,7 @@ bool AirportItlwm::start(IOService *provider)
     }
     watchdogTimer = IOTimerEventSource::timerEventSource(this, OSMemberFunctionCast(IOTimerEventSource::Action, this, &AirportItlwm::watchdogAction));
     if (!watchdogTimer) {
+        setProperty("trace_step", "FAIL_watchdogTimer");
         XYLog("init watchdog fail\n");
         fHalService->detach(pciNub);
         super::stop(pciNub);
@@ -298,65 +320,83 @@ bool AirportItlwm::start(IOService *provider)
     _fWorkloop->addEventSource(scanSource);
     scanSource->enable();
 
+    setProperty("trace_step", "12_pre_newSkywalkInterface");
     fNetIf = new AirportItlwmSkywalkInterface;
     if (!fNetIf->init(this)) {
+        setProperty("trace_step", "FAIL_skywalkInit");
         XYLog("Skywalk interface init fail\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
+    setProperty("trace_step", "13_post_skywalkInit");
     fNetIf->setInterfaceRole(1);
     fNetIf->setInterfaceId(1);
-    
+
     if (!initCCLogs()) {
+        setProperty("trace_step", "FAIL_initCCLogs");
         XYLog("CCLog init fail\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
+    setProperty("trace_step", "14_post_initCCLogs");
     if (!fNetIf->attach(this)) {
+        setProperty("trace_step", "FAIL_skywalkAttach");
         XYLog("attach to service fail\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
+    setProperty("trace_step", "15_post_skywalkAttach");
     if (!attachInterface(fNetIf, this)) {
+        setProperty("trace_step", "FAIL_attachInterface");
         XYLog("attach to interface fail\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
+    setProperty("trace_step", "16_post_attachInterface");
     if (!IONetworkController::attachInterface((IONetworkInterface **)&bsdInterface, true)) {
+        setProperty("trace_step", "FAIL_IONCAttachInterface");
         XYLog("attach to IONetworkController interface fail\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
+    setProperty("trace_step", "17_post_IONCAttachInterface");
     memset(&registInfo, 0, sizeof(registInfo));
     if (!fNetIf->initRegistrationInfo(&registInfo, 1, sizeof(registInfo))) {
+        setProperty("trace_step", "FAIL_initRegistrationInfo_1");
         XYLog("initRegistrationInfo fail\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
     if (!fNetIf->initRegistrationInfo(&registInfo, 1, sizeof(registInfo))) {
+        setProperty("trace_step", "FAIL_initRegistrationInfo_2");
         XYLog("initRegistrationInfo fail\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
+    setProperty("trace_step", "18_post_initRegistrationInfo");
     fNetIf->mExpansionData->fRegistrationInfo = (struct IOSkywalkNetworkInterface::RegistrationInfo *)IOMalloc(sizeof(struct IOSkywalkNetworkInterface::RegistrationInfo));
     fNetIf->mExpansionData2->fRegistrationInfo = (struct IOSkywalkEthernetInterface::RegistrationInfo *)IOMalloc(sizeof(struct IOSkywalkEthernetInterface::RegistrationInfo));
     memcpy(fNetIf->mExpansionData->fRegistrationInfo, &registInfo, sizeof(registInfo));
     memcpy(fNetIf->mExpansionData2->fRegistrationInfo, &registInfo, sizeof(registInfo));
     if (fNetIf->getInterfaceRole() == 1)
         fNetIf->deferBSDAttach(true);
+    setProperty("trace_step", "19_pre_skywalkStart");
     fNetIf->start(this);
-    
+    setProperty("trace_step", "20_post_skywalkStart");
+
     setLinkStatus(kIONetworkLinkValid);
     if (TAILQ_EMPTY(&fHalService->get80211Controller()->ic_ess))
         fHalService->get80211Controller()->ic_flags |= IEEE80211_F_AUTO_JOIN;
+    setProperty("trace_step", "21_pre_registerService");
     registerService();
+    setProperty("trace_step", "22_DONE");
     return true;
 }
 
