@@ -30,6 +30,7 @@ void AirportItlwm::releaseAll()
     OSSafeReleaseNULL(driverFaultReporter);
 #if __IO80211_TARGET >= __MAC_15_0
     OSSafeReleaseNULL(io80211FaultReporter);
+    OSSafeReleaseNULL(driverLogStream);
 #endif
     if (fHalService) {
         fHalService->release();
@@ -227,6 +228,28 @@ initCCLogs()
     // CCFaultReporter*. PeerManager later does vtable[0x120] on it expecting
     // CCFaultReporter::registerCallbacks. CCStream's vtable[0x120] is something
     // else -> NULL+0x38 release deref panic. Must return IO80211FaultReporter*.
+    // Sequoia: Apple's IO80211ScanManager::commonInit (file 0x18d023) calls
+    // controller->vtable[0xd40] (= getControllerGlobalLogger, slot 426) and
+    // stores result as CCLogStream* in scanIvars[0xe8]. Then
+    // createReportersAndLegend does fLogStream->shouldLog(1) which derefs
+    // ((CCLogStream*)x)->ivars[0x90][0x58]. Must return a real CCLogStream
+    // built from CCStream::withPipeAndName + OSDynamicCast<CCLogStream>.
+    driverLogStream = NULL;
+    {
+        CCStreamOptions logStreamOptions = { 0 };
+        logStreamOptions.stream_type = 0;
+        logStreamOptions.console_level = 0xFFFFFFFFFFFFFFFF;
+        CCStream *logStreamBase = CCStream::withPipeAndName(driverLogPipe, "DriverLogStream", &logStreamOptions);
+        if (logStreamBase) {
+            driverLogStream = OSDynamicCast(CCLogStream, logStreamBase);
+            if (!driverLogStream)
+                logStreamBase->release();
+            // If cast succeeded, the dynamic_cast returned the same pointer
+            // with the existing retain — don't release.
+        }
+    }
+    XYLog("%s driverLogStreamRet %d\n", __FUNCTION__, driverLogStream != NULL);
+
     io80211FaultReporter = NULL;
     if (driverFaultReporter) {
         CCDataStream *fdStream = OSDynamicCast(CCDataStream, driverFaultReporter);
@@ -250,7 +273,7 @@ initCCLogs()
         }
     }
     XYLog("%s io80211FaultReporterRet %d\n", __FUNCTION__, io80211FaultReporter != NULL);
-    return driverLogPipe && driverDataPathPipe && driverSnapshotsPipe && driverFaultReporter && io80211FaultReporter;
+    return driverLogPipe && driverDataPathPipe && driverSnapshotsPipe && driverFaultReporter && io80211FaultReporter && driverLogStream;
 #else
     return driverLogPipe && driverDataPathPipe && driverSnapshotsPipe && driverFaultReporter;
 #endif

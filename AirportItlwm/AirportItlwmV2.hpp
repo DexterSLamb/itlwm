@@ -28,6 +28,7 @@
 #include "Airport/CCDataStream.h"
 #include "Airport/CCFaultReporter.h"
 #include "Airport/IO80211FaultReporter.h"
+#include "Airport/CCLogStream.h"
 
 enum
 {
@@ -160,13 +161,20 @@ public:
         return false;
     };
 #if __IO80211_TARGET >= __MAC_15_0
-    // Slot 426 in Sequoia: Apple expects CCLogStream* (zero-arg getter).
-    // Returning NULL kills createIOReporters → start fails. Return 'this' as a
-    // dummy non-NULL OSObject pointer to unblock createIOReporters; next failure
-    // (if Apple actually invokes CCLogStream methods on it) tells us if a real
-    // CCLogStream is required at this stage.
+    // Slot 426 in Sequoia is a CCLogStream* getter (NOT handleCardSpecific —
+    // that name was a wrong guess from old itlwm header). Apple's
+    // IO80211ScanManager::commonInit at file 0x18d023 calls
+    // controller->vtable[0xd40] (= slot 426) and stores the return as
+    // CCLogStream* in scanIvars[0xe8]. ScanManager::createReportersAndLegend
+    // later does fLogStream->shouldLog(1), which reads
+    // ((CCLogStream*)x)->ivars[0x90][0x58] — if x is anything but a real
+    // CCLogStream produced by CCStream::withPipeAndName + OSDynamicCast,
+    // those offsets dereference into garbage and panic at corecapture+0x1b22b
+    // (CR2=0x9 from the cmp dword [rax+8]).
+    // We construct driverLogStream in initCCLogs (CCStream::withPipeAndName
+    // on driverLogPipe with stream_type=0 → OSDynamicCast<CCLogStream>).
     virtual void *getControllerGlobalLogger() override {
-        return (void *)this;
+        return driverLogStream;
     };
 #else
     virtual SInt32 handleCardSpecific(IO80211SkywalkInterface *,unsigned long,void *,bool) override {
@@ -290,6 +298,9 @@ public:
     // -> NULL+0x38 release deref panic. Wrap driverFaultReporter via
     // CCFaultReporter::withStreamWorkloop -> IO80211FaultReporter::allocWithParams.
     IO80211FaultReporter *io80211FaultReporter;
+    // Sequoia: Apple's getControllerGlobalLogger (slot 426) must return a real
+    // CCLogStream* obtained via CCStream::withPipeAndName + OSDynamicCast<CCLogStream>.
+    CCLogStream *driverLogStream;
 #endif
 };
 
