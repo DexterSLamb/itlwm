@@ -126,9 +126,9 @@ public:
     
     virtual bool getLogPipes(CCPipe**, CCPipe**, CCPipe**) override;
     
-#if __IO80211_TARGET < __MAC_15_0
     virtual void *getFaultReporterFromDriver() override;
 
+#if __IO80211_TARGET < __MAC_15_0
     virtual SInt32 apple80211_ioctl(IO80211SkywalkInterface *,unsigned long,void *, bool, bool) override;
     virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *) override;
     virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *,void *) override;

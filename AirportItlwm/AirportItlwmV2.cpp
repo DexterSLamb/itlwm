@@ -408,12 +408,12 @@ IO80211WorkQueue *AirportItlwm::getWorkQueue()
     return _fWorkloop;
 }
 
-#if __IO80211_TARGET < __MAC_15_0
 void *AirportItlwm::getFaultReporterFromDriver()
 {
     return driverFaultReporter;
 }
 
+#if __IO80211_TARGET < __MAC_15_0
 IOReturn AirportItlwm::enable(IO80211SkywalkInterface *netif)
 {
     XYLog("%s\n", __PRETTY_FUNCTION__);
