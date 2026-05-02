@@ -25,6 +25,9 @@
 #include "ItlIwn.hpp"
 
 #include "AirportItlwmEthernetInterface.hpp"
+#include "Airport/CCDataStream.h"
+#include "Airport/CCFaultReporter.h"
+#include "Airport/IO80211FaultReporter.h"
 
 enum
 {
@@ -279,6 +282,15 @@ public:
     CCPipe *driverSnapshotsPipe;
     
     CCStream *driverFaultReporter;
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia: Apple's getFaultReporterFromDriver vtable slot must return an
+    // IO80211FaultReporter* (not a CCStream*). PeerManager later calls
+    // CCFaultReporter::registerCallbacks via vtable[0x120] on this pointer;
+    // returning a CCStream caused the vtable slot to land on the wrong method
+    // -> NULL+0x38 release deref panic. Wrap driverFaultReporter via
+    // CCFaultReporter::withStreamWorkloop -> IO80211FaultReporter::allocWithParams.
+    IO80211FaultReporter *io80211FaultReporter;
+#endif
 };
 
 #endif /* AirportItlwmV2_hpp */

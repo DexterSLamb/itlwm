@@ -28,6 +28,9 @@ void AirportItlwm::releaseAll()
     OSSafeReleaseNULL(driverDataPathPipe);
     OSSafeReleaseNULL(driverSnapshotsPipe);
     OSSafeReleaseNULL(driverFaultReporter);
+#if __IO80211_TARGET >= __MAC_15_0
+    OSSafeReleaseNULL(io80211FaultReporter);
+#endif
     if (fHalService) {
         fHalService->release();
         fHalService = NULL;
@@ -214,7 +217,32 @@ initCCLogs()
     faultReportOptions.console_level = 0xFFFFFFFFFFFFFFFF;
     driverFaultReporter = CCStream::withPipeAndName(driverSnapshotsPipe, "FaultReporter", &faultReportOptions);
     XYLog("%s driverFaultReporterRet %d\n", __FUNCTION__, driverFaultReporter != NULL);
+
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia: wrap driverFaultReporter (CCStream, runtime-castable to
+    // CCDataStream when stream_type=1) into IO80211FaultReporter via Apple's
+    // CCFaultReporter::withStreamWorkloop -> IO80211FaultReporter::allocWithParams.
+    // Apple's IO80211Controller::findAndAttachToFaultReporter calls our
+    // getFaultReporterFromDriver() and stores the return into ivars+0x58 as
+    // CCFaultReporter*. PeerManager later does vtable[0x120] on it expecting
+    // CCFaultReporter::registerCallbacks. CCStream's vtable[0x120] is something
+    // else -> NULL+0x38 release deref panic. Must return IO80211FaultReporter*.
+    io80211FaultReporter = NULL;
+    if (driverFaultReporter) {
+        CCDataStream *fdStream = OSDynamicCast(CCDataStream, driverFaultReporter);
+        if (fdStream && _fWorkloop) {
+            CCFaultReporter *ccfr = CCFaultReporter::withStreamWorkloop(fdStream, _fWorkloop);
+            if (ccfr) {
+                io80211FaultReporter = IO80211FaultReporter::allocWithParams(ccfr);
+                ccfr->release();  // allocWithParams retains
+            }
+        }
+    }
+    XYLog("%s io80211FaultReporterRet %d\n", __FUNCTION__, io80211FaultReporter != NULL);
+    return driverLogPipe && driverDataPathPipe && driverSnapshotsPipe && driverFaultReporter && io80211FaultReporter;
+#else
     return driverLogPipe && driverDataPathPipe && driverSnapshotsPipe && driverFaultReporter;
+#endif
 }
 
 bool AirportItlwm::start(IOService *provider)
@@ -497,7 +525,14 @@ IO80211WorkQueue *AirportItlwm::getWorkQueue()
 
 void *AirportItlwm::getFaultReporterFromDriver()
 {
+#if __IO80211_TARGET >= __MAC_15_0
+    // Apple stores this in IO80211Controller ivars+0x58, then PeerManager
+    // calls CCFaultReporter::registerCallbacks via vtable[0x120]. Must be
+    // an IO80211FaultReporter (which is_a CCFaultReporter), not a CCStream.
+    return io80211FaultReporter;
+#else
     return driverFaultReporter;
+#endif
 }
 
 #if __IO80211_TARGET < __MAC_15_0
