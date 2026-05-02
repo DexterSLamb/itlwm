@@ -401,10 +401,27 @@ bool AirportItlwm::start(IOService *provider)
         return false;
     }
     setProperty("trace_step", "18_post_initRegistrationInfo");
+#if __IO80211_TARGET < __MAC_15_0
+    // Sonoma 14.x path: legacy upstream code manually populated the
+    // mExpansionData/mExpansionData2 RegistrationInfo slots to work around an
+    // older itlwm class layout. KEEP for Sonoma — it's been verified working.
     fNetIf->mExpansionData->fRegistrationInfo = (struct IOSkywalkNetworkInterface::RegistrationInfo *)IOMalloc(sizeof(struct IOSkywalkNetworkInterface::RegistrationInfo));
     fNetIf->mExpansionData2->fRegistrationInfo = (struct IOSkywalkEthernetInterface::RegistrationInfo *)IOMalloc(sizeof(struct IOSkywalkEthernetInterface::RegistrationInfo));
     memcpy(fNetIf->mExpansionData->fRegistrationInfo, &registInfo, sizeof(registInfo));
     memcpy(fNetIf->mExpansionData2->fRegistrationInfo, &registInfo, sizeof(registInfo));
+#else
+    // Sequoia 15.x: upstream IOSkywalkEthernetInterface header has the wrong
+    // class size (assumes 0x120 ala Tahoe 26; Sequoia is 0x110, mExpansionData2
+    // at offset 0x100 not 0x108). Manual writes corrupt adjacent ivars
+    // (PeerManager-related slot), causing IO80211PeerManager::initWithInterface
+    // to dereference NULL+0x38 (OSObject NULL release) → kernel panic.
+    // initRegistrationInfo (called above) already populated both expansion
+    // slots through the framework — manual writes are redundant AND
+    // structurally harmful on Sequoia. Drop them.
+    // Confirmed by rdmitry0911/itlwm Tahoe fork commit message: "Manual
+    // allocation was removed because it wrote to the WRONG offsets when our
+    // class size was 0x10 too small".
+#endif
     if (fNetIf->getInterfaceRole() == 1)
         fNetIf->deferBSDAttach(true);
     setProperty("trace_step", "19_pre_skywalkStart");
