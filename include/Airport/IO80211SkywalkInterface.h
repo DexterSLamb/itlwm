@@ -197,7 +197,25 @@ public:
     int getInterfaceRole();
     
 public:
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia 15.7.4 KDK ground truth: IO80211SkywalkInterface size = 0x118 total
+    // (parent IOSkywalkEthernetInterface = 0x110, +0x110 holds an 8-byte ivars
+    // pointer). Original itlwm header had _data[0x118] -> total 0x110+0x118=0x228,
+    // which oversizes the instance and shifts AirportItlwmSkywalkInterface ivars.
+    // When IONetworkingFamily later stores callback function pointers into
+    // ivars at fixed offsets, our oversized layout causes ifnet ioctl calls
+    // to dereference into AirportItlwmSkywalkInterface's own data, jumping to
+    // non-executable addresses (NX fault, e.g. into IO80211InfraProtocol::gMetaClass).
+    char _data[0x8];
+#else
+    // Sonoma 14.x: original size from itlwm. The Sonoma stack has different
+    // ivar handling; do NOT shrink for that target. Verified working with v2.4.0 fix.
     char _data[0x118];
+#endif
 };
+
+#if __IO80211_TARGET >= __MAC_15_0
+static_assert(sizeof(IO80211SkywalkInterface) == 0x118, "IO80211SkywalkInterface size mismatch with Sequoia KDK");
+#endif
 
 #endif /* _IO80211SKYWALK_H */
