@@ -5,6 +5,7 @@
 
 struct nicproxy_limits_info_s;
 struct nicproxy_info_s;
+class IOSkywalkLogicalLink;
 
 class IOSkywalkEthernetInterface : public IOSkywalkNetworkInterface {
     OSDeclareAbstractStructors( IOSkywalkEthernetInterface )
@@ -35,7 +36,16 @@ public:
     virtual void *getInterfaceSubFamily(void) APPLE_KEXT_OVERRIDE;
     virtual UInt getInitialMedia(void) APPLE_KEXT_OVERRIDE;
     virtual const char *getBSDNamePrefix(void) APPLE_KEXT_OVERRIDE;
-#if __IO80211_TARGET < __MAC_15_0
+#if __IO80211_TARGET >= __MAC_15_0
+    // 15.7.5 ground truth: NEW vmethod at slot 334 in
+    // IOSkywalkEthernetInterface (was previously a parent
+    // IOSkywalkNetworkInterface RESERVED slot). Source:
+    // research/sequoia-port/diff/15.7.5-IOSkywalkEthernetInterface-vtable.txt
+    // (slot 334 = __ZN26IOSkywalkEthernetInterface39registerNetworkInterfaceWithLogicalLinkE…)
+    //
+    // Inserting this declaration shifts all subsequent slots in
+    // IO80211SkywalkInterface / IO80211InfraInterface / IO80211InfraProtocol
+    // down by one, matching the kernel's new vtable layout.
     virtual IOReturn registerNetworkInterfaceWithLogicalLink(IOSkywalkEthernetInterface::RegistrationInfo const*, IOSkywalkLogicalLink*, IOSkywalkPacketBufferPool*, IOSkywalkPacketBufferPool*, UInt);
 #endif
     virtual void getHardwareAddress(ether_addr *);
@@ -61,7 +71,12 @@ public:
     
 public:
     bool initRegistrationInfo(IOSkywalkEthernetInterface::RegistrationInfo*, unsigned int, unsigned long);
-    bool registerEthernetInterface(IOSkywalkEthernetInterface::RegistrationInfo const*, IOSkywalkPacketQueue**, unsigned int, IOSkywalkPacketBufferPool*, IOSkywalkPacketBufferPool*, unsigned int);
+    // 15.7.5 ground truth: registerEthernetInterface actually returns IOReturn
+    // (kIOReturnSuccess = 0). Was previously declared as bool, which inverted
+    // success/failure semantics: 0 (success) was misread as false. Source:
+    // research/sequoia-port/diff/15.7.5-api-presence.md and Apple's MacKernelSDK
+    // header at MacKernelSDK/Headers/IOKit/skywalk/IOSkywalkEthernetInterface.h.
+    IOReturn registerEthernetInterface(IOSkywalkEthernetInterface::RegistrationInfo const*, IOSkywalkPacketQueue**, unsigned int, IOSkywalkPacketBufferPool*, IOSkywalkPacketBufferPool*, unsigned int);
     
 public:
     void *vptr;
