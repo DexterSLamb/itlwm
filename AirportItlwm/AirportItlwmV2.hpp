@@ -29,9 +29,12 @@
 #include "Airport/CCFaultReporter.h"
 #include "Airport/CCLogStream.h"
 #if __IO80211_TARGET >= __MAC_15_0
-#include "Airport/IOSkywalkPacketBufferPool.h"
-#include <IOKit/skywalk/IOSkywalkTxSubmissionQueue.h>
-#include <IOKit/skywalk/IOSkywalkRxCompletionQueue.h>
+// IOSkywalkPacketBufferPool already pulled in via Airport/Apple80211.h above.
+// We use minimal local headers for the Tx/Rx queue classes to avoid the
+// MacKernelSDK <IOKit/skywalk/...> headers, which would re-declare
+// IOSkywalkPacketBufferPool with different include guards (collision).
+#include "Airport/IOSkywalkTxSubmissionQueue.h"
+#include "Airport/IOSkywalkRxCompletionQueue.h"
 #endif
 
 enum
