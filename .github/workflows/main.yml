@@ -21,6 +21,7 @@ jobs:
     - uses: actions/checkout@v4
       with:
         fetch-depth: '5'
+        submodules: recursive
 
     - name: Manage Version
       run: |
@@ -57,6 +58,14 @@ jobs:
         echo "===== ALL ERROR LINES ====="
         grep -E " error:" /tmp/seq-build.log | head -30 || true
         ! grep -q "BUILD FAILED" /tmp/seq-build.log
+
+    - name: Build AirportItlwmShim (Lilu plugin for Sequoia)
+      run: |
+        # Standalone build script, no Xcode target. Output goes alongside the
+        # other kexts in $BUILD_OUTPUT so the packing stage picks it up.
+        OUT_DIR="$(pwd)/${BUILD_OUTPUT}/Sequoia15" \
+        bash AirportItlwmShim/build.sh
+        ls -la "${BUILD_OUTPUT}/Sequoia15/" || true
 
     - name: Pack Artifacts
       run: |

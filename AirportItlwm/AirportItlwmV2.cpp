@@ -14,6 +14,7 @@
 
 #include "AirportItlwmSkywalkInterface.hpp"
 #include "IOPCIEDeviceWrapper.hpp"
+#include "AirportItlwmShim_glue.hpp"
 
 #define super IO80211Controller
 OSDefineMetaClassAndStructors(AirportItlwm, IO80211Controller);
@@ -21,6 +22,35 @@ OSDefineMetaClassAndStructors(CTimeout, OSObject)
 
 IO80211WorkQueue *_fWorkloop;
 IOCommandGate *_fCommandGate;
+
+#if __IO80211_TARGET >= __MAC_15_0
+// Function pointers populated from IOResources properties published by
+// AirportItlwmShim.kext (Lilu plugin). See AirportItlwmShim_glue.hpp.
+TxWithPoolFn  gShimTxWithPool  = nullptr;
+RxWithPoolFn  gShimRxWithPool  = nullptr;
+PostMessageFn gShimPostMessage = nullptr;
+
+bool resolveSequoiaShimSymbols(void)
+{
+    IOService *res = IOService::getResourceService();
+    if (!res) return false;
+
+    auto pull = [&](const char *key) -> uint64_t {
+        OSObject *o = res->getProperty(key);
+        OSData *d = OSDynamicCast(OSData, o);
+        if (!d || d->getLength() != sizeof(uint64_t)) return 0;
+        uint64_t v = 0;
+        memcpy(&v, d->getBytesNoCopy(), sizeof(v));
+        return v;
+    };
+
+    gShimTxWithPool  = (TxWithPoolFn) pull("AirportItlwm-IOSkywalkTxSubmissionQueue-withPool");
+    gShimRxWithPool  = (RxWithPoolFn) pull("AirportItlwm-IOSkywalkRxCompletionQueue-withPool");
+    gShimPostMessage = (PostMessageFn)pull("AirportItlwm-IO80211Controller-postMessage");
+
+    return gShimTxWithPool != nullptr && gShimRxWithPool != nullptr;
+}
+#endif
 
 #if __IO80211_TARGET >= __MAC_15_0
 // Stub Skywalk TX submission action: required by withPool() but the
@@ -97,6 +127,19 @@ void AirportItlwm::releaseAll()
     }
     unregistPM();
 }
+
+#if __IO80211_TARGET >= __MAC_15_0
+// Sequoia 15.7.5 thunk for the inherited (and unexported) parent
+// IO80211Controller::postMessage(uint, void*, ulong, uint, void*).
+// Routes through gShimPostMessage when present; otherwise drops the message
+// (no fatal effect — postMessage is an out-of-band notification path).
+void AirportItlwm::postMessage(UInt msg, void *data, unsigned long dataLen,
+                               UInt arg4, void *arg5)
+{
+    if (gShimPostMessage)
+        gShimPostMessage(this, (uint32_t)msg, data, dataLen, (uint32_t)arg4, arg5);
+}
+#endif
 
 void AirportItlwm::
 eventHandler(struct ieee80211com *ic, int msgCode, void *data)
@@ -547,10 +590,35 @@ bool AirportItlwm::start(IOService *provider)
     }
     setProperty("trace_step", "18b_post_pools");
 
-    fTxQueue = IOSkywalkTxSubmissionQueue::withPool(fTxPool, 256, 0, this,
-                                                    skywalkTxAction, NULL, 0);
-    fRxQueue = IOSkywalkRxCompletionQueue::withPool(fRxPool, 256, 0, this,
-                                                    skywalkRxAction, NULL, 0);
+    // Sequoia 15.7.5: IOSkywalkTxSubmissionQueue::withPool /
+    // IOSkywalkRxCompletionQueue::withPool are not in Apple's kxld export
+    // table. We resolve them at runtime via AirportItlwmShim.kext (Lilu plugin)
+    // and call through the function pointer instead of taking a static-link
+    // reference. Wait for the shim's IOResources publication first, then
+    // pull the function pointers.
+    {
+        OSDictionary *match = IOService::serviceMatching("IOResources");
+        IOService *resSvc = IOService::waitForService(match, NULL);  // consumes match
+        (void)resSvc;
+        // 5 second cap: if the shim never showed up, prefer to fail explicitly
+        // rather than NULL-deref the function pointer below.
+        for (int i = 0; i < 50 && !IOService::getResourceService()->getProperty("AirportItlwm-Shim-Ready"); i++) {
+            IOSleep(100);
+        }
+        if (!resolveSequoiaShimSymbols()) {
+            setProperty("trace_step", "FAIL_shim_symbols_unresolved");
+            XYLog("AirportItlwmShim did not publish required Sequoia symbols\n");
+            super::stop(provider);
+            releaseAll();
+            return false;
+        }
+    }
+    setProperty("trace_step", "18b1_post_resolveShim");
+
+    fTxQueue = gShimTxWithPool(fTxPool, 256, 0, this,
+                               skywalkTxAction, NULL, 0);
+    fRxQueue = gShimRxWithPool(fRxPool, 256, 0, this,
+                               skywalkRxAction, NULL, 0);
     if (!fTxQueue || !fRxQueue) {
         setProperty("trace_step", "FAIL_skywalkQueue");
         XYLog("Skywalk queue create fail TX=%p RX=%p\n", fTxQueue, fRxQueue);

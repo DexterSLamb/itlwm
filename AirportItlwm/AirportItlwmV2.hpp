@@ -187,6 +187,18 @@ public:
     virtual void *getDriverTextLog() override {
         return driverLogStream;
     };
+
+    // Sequoia 15.7.5: IO80211Controller::postMessage (vtable slot 471, mangled
+    // __ZN17IO80211Controller11postMessageEjPvmjS0_) was removed from Apple's
+    // kxld export table. Without an override, our vtable inherits a relocation
+    // pointing at the missing parent symbol — kxld export check fails and the
+    // kext refuses to load. Override here so our slot points at our own thunk
+    // that forwards through a function pointer resolved at runtime by
+    // AirportItlwmShim.kext (a Lilu plugin). Falls back to a silent no-op if
+    // the shim hasn't published the symbol — postMessage is informational only,
+    // missing it doesn't break the data path.
+    virtual void postMessage(UInt msg, void *data, unsigned long dataLen,
+                             UInt arg4, void *arg5) override;
 #else
     virtual SInt32 handleCardSpecific(IO80211SkywalkInterface *,unsigned long,void *,bool) override {
         XYLog("%s\n", __FUNCTION__);
