@@ -159,8 +159,11 @@ void AirportItlwmShimPlugin::onKextLoad(KernelPatcher &kp, size_t idx,
 
     if (idx == gSkywalkKext.loadIndex) {
         if (!txWithPool) {
+            // Sequoia 15.7.5 corrected mangling: PKP not PPK (the `K` qualifies
+            // the inner pointer in `IOSkywalkPacket * const *`, not the
+            // pointee's pointee). nm BootKC verified.
             txWithPool = kp.solveSymbol(idx,
-                "__ZN26IOSkywalkTxSubmissionQueue8withPoolEP25IOSkywalkPacketBufferPooljjP8OSObjectPFjS3_PS_PPK15IOSkywalkPacketjPvES9_j");
+                "__ZN26IOSkywalkTxSubmissionQueue8withPoolEP25IOSkywalkPacketBufferPooljjP8OSObjectPFjS3_PS_PKP15IOSkywalkPacketjPvES9_j");
             if (txWithPool)
                 publishOne("AirportItlwm-IOSkywalkTxSubmissionQueue-withPool", txWithPool);
             else

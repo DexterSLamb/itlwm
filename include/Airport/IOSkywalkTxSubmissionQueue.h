@@ -26,7 +26,15 @@ typedef IOReturn (*IOSkywalkQueryFreeSpaceHandler)(OSObject *owner, IOSkywalkTxS
 // generates a different mangled symbol for withPool() and kxld silently
 // fails to bind it -> driver doesn't load (boot completes, no panic, no en0).
 // Source: research/sequoia-port/diff/15.7.5-IOSkywalkTxSubmissionQueue-vtable.txt
-typedef unsigned int (*IOSkywalkTxSubmissionQueueAction)(OSObject *owner, IOSkywalkTxSubmissionQueue *queue, const IOSkywalkPacket **, UInt32, void *);
+// Sequoia 15.7.5 ground truth (corrected): Apple's actual mangled symbol for
+// the packets-array argument is `PKP15IOSkywalkPacket` = `IOSkywalkPacket *
+// const *` (pointer to const-pointer, i.e., the array pointers can't be
+// reassigned but the packets they point to are mutable). Previously declared
+// `const IOSkywalkPacket **` which mangles `PPK15IOSkywalkPacket` (P-P-K) —
+// off by one K position. Lilu solveSymbol returned NULL for Tx withPool
+// because the mangled name didn't match Apple's export. Verified via:
+//   nm BootKC | grep "ZN26IOSkywalkTxSubmissionQueue8withPool" → PKP form
+typedef unsigned int (*IOSkywalkTxSubmissionQueueAction)(OSObject *owner, IOSkywalkTxSubmissionQueue *queue, IOSkywalkPacket * const *, UInt32, void *);
 
 // IOSkywalkPacketQueue inherits IOEventSource per Apple's binary; here
 // we only use the leaf class as a black box (passed by pointer).

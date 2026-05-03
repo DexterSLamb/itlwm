@@ -65,7 +65,7 @@ bool resolveSequoiaShimSymbols(void)
 // not loaded.
 static unsigned int
 skywalkTxAction(OSObject *owner, IOSkywalkTxSubmissionQueue *queue,
-                const IOSkywalkPacket **packets, UInt32 count, void *refCon)
+                IOSkywalkPacket * const *packets, UInt32 count, void *refCon)
 {
     (void)owner; (void)queue; (void)packets; (void)refCon;
     return 0;
