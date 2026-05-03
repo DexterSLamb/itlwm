@@ -17,6 +17,25 @@
 #define super IO80211InfraProtocol
 OSDefineMetaClassAndStructors(AirportItlwmSkywalkInterface, IO80211InfraProtocol);
 
+#if __IO80211_TARGET >= __MAC_15_0
+// Sequoia 15.7.5 vtable slot 419 (ZTV byte 0xd18, vptr byte 0xd08).
+// Apple Glue::initWithOptions @0x1a17f does:
+//   callq *0xd08(%rax)        ; r14->getLogger() — r14 = SkywalkInterface
+//   movq  %rax, 0x50(%rsi)    ; inner->ivars[0x50] = result
+//   testq %rax, %rax / je 0x1a41d   ; FAIL if NULL → freeResources CR2=0 panic
+// Apple's base IO80211SkywalkInterface::getLogger reads ivars[0x110]+0x78 set
+// in IO80211SkywalkInterface::start +0x32C via CCStream::withPipeAndName.
+// Our class never lets that init path run cleanly; instead we expose the
+// CCLogStream that AirportItlwm::initCCLogs created (driverLogStream) via
+// the existing getControllerGlobalLogger() override on the controller side.
+void *AirportItlwmSkywalkInterface::getLogger() const {
+    if (instance == nullptr) {
+        return nullptr;
+    }
+    return instance->getControllerGlobalLogger();
+}
+#endif
+
 const char* hexdump(uint8_t *buf, size_t len) {
     ssize_t str_len = len * 3 + 1;
     char *str = (char*)IOMalloc(str_len);

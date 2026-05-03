@@ -279,7 +279,15 @@ public:
     virtual IOReturn setWCL_CONFIG_BGSCAN(apple80211_bg_scan *) override { return kIOReturnUnsupported; }
     virtual IOReturn setWCL_CONFIG_BG_PARAMS(apple80211_bg_params *) override { return kIOReturnUnsupported; }
     virtual IOReturn setBLOCKED_BANDS(apple80211_blocked_bands *) override { return kIOReturnUnsupported; }
-    
+
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia 15.7.5 slot 419: getLogger() const must return our CCLogStream*
+    // (Apple's Glue::initWithOptions @0x1a17f null-checks this). We forward
+    // to AirportItlwm::getControllerGlobalLogger which exposes driverLogStream
+    // from initCCLogs. Returning NULL crashes Apple's framework.
+    virtual void *getLogger() const override;
+#endif
+
 private:
     AirportItlwm *instance;
     ItlHalService *fHalService;

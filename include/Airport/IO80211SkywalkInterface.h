@@ -218,13 +218,18 @@ public:
     virtual void setSelfMacAddr(ether_addr *);
 #endif
     virtual void *getPacketPool(OSString *);
-    // Sequoia 15.7.5 BootKC does NOT export IO80211SkywalkInterface::getLogger
-    // (only AppleBCMWLAN* subclasses define it as const). Provide an inline
-    // concrete impl returning nullptr so our vtable slot is owned by us
-    // (kxld doesn't need to resolve any extern symbol). Sonoma 14.x kept the
-    // pure declaration; previously fine because 14.x BootKC exported it.
+    // Sequoia 15.7.5: Apple's IO80211SkywalkInterface::getLogger() is const,
+    // returns CCLogStream* read from ivars[0x110]+0x78 (set by Apple's start
+    // via CCStream::withPipeAndName). Apple Glue::initWithOptions @0x1a17f
+    // hard-checks this returns non-NULL or fails, leading to freeResources
+    // CR2=0 panic on uninitialized list head.
+    // Returning NULL from our override (previous behavior) was the bug; we
+    // now provide a default `nullptr` impl in the abstract base, AND require
+    // the concrete subclass (AirportItlwmSkywalkInterface) to override with
+    // the controller's driverLogStream that initCCLogs created.
+    // Slot 419 (ZTV byte 0xd18, vptr byte 0xd08).
 #if __IO80211_TARGET >= __MAC_15_0
-    virtual void *getLogger(void) { return nullptr; }
+    virtual void *getLogger() const { return nullptr; }
 #else
     virtual void *getLogger(void);
 #endif
