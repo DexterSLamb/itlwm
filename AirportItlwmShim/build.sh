@@ -62,13 +62,44 @@ LDFLAGS=(
 )
 
 OBJ="$OUT_DIR/AirportItlwmShim.o"
+PSO="$OUT_DIR/plugin_start.o"
+KMODO="$OUT_DIR/kmod_info.o"
 mkdir -p "$(dirname "$OBJ")"
 
+# Plain-C flags subset (no C++-only options). Used for kmod_info.c.
+CFLAGS_C=()
+for arg in "${CFLAGS[@]}"; do
+    case "$arg" in
+        -fno-rtti|-fno-exceptions|-fvisibility-inlines-hidden|-stdlib=libc++|-std=gnu++14)
+            ;;
+        *)
+            CFLAGS_C+=("$arg")
+            ;;
+    esac
+done
+
+# Compile our plugin source.
 xcrun clang++ "${CFLAGS[@]}" -c "$HERE/AirportItlwmShim.cpp" -o "$OBJ"
-xcrun clang++ "${LDFLAGS[@]}" "$OBJ" -o "$EXE_DIR/AirportItlwmShim"
+# Compile Lilu's plugin_start.cpp so we get ADDPR(kern_start)/kern_stop and
+# the IOService probe/start/stop boilerplate Lilu plugins use.
+xcrun clang++ "${CFLAGS[@]}" -c "$LILU_HEADERS/../Library/plugin_start.cpp" -o "$PSO"
+# Compile the kmod_info glue (separate file, plain C). Emits _kmod_info,
+# _realmain, _antimain, _kext_apple_cc — all required by libkmod.a's
+# c_start.o / c_stop.o so the linker actually pulls them in and produces
+# _start / _stop entry points and the _kmod_info data symbol that OC's
+# KextFindKmodAddress() looks up.
+xcrun clang   "${CFLAGS_C[@]}" -std=gnu11 -c "$HERE/kmod_info.c" -o "$KMODO"
+
+xcrun clang++ "${LDFLAGS[@]}" "$OBJ" "$PSO" "$KMODO" -o "$EXE_DIR/AirportItlwmShim"
 
 # Ad-hoc codesign — required for kxld even with SIP off.
 xcrun codesign -fs - "$KEXT" || true
 
 echo "Built: $KEXT"
+echo "--- Undefined symbols (must satisfy via OSBundleLibraries / kxld at load) ---"
 nm -arch x86_64 -u "$EXE_DIR/AirportItlwmShim" | head -20 || true
+echo "--- kmod_info presence (must show one D symbol; required by OC injection) ---"
+nm -arch x86_64 "$EXE_DIR/AirportItlwmShim" | grep -E " _(kmod_info|start|stop|realmain|antimain)$" || {
+    echo "ERROR: required kmod_info / start / stop symbols missing from Shim binary"
+    exit 1
+}

@@ -45,11 +45,21 @@ jobs:
 
     - name: Build AirportItlwm-Sequoia15
       run: |
+        # OTHER_LDFLAGS=-no_zero_fill_sections forces ld64 to materialise
+        # __DATA __bss / __common as real (zeroed) bytes in the file rather
+        # than declaring them with S_ZEROFILL. Without this, the on-disk
+        # __DATA filesize is smaller than vmsize, which makes the
+        # __LINKEDIT segment's (vmaddr - fileoff) delta differ from earlier
+        # segments. OcAppleKernelLib's MachoInitializeContext rejects this
+        # inconsistency and OC reports "Invalid Parameter" during prelinked
+        # injection. Sonoma14.4 build is unaffected because the override is
+        # only applied here.
         xcodebuild -project itlwm.xcodeproj -target "AirportItlwm-Sonoma14.4" -configuration Debug \
           SYMROOT="$(pwd)/build/Build/Products" \
           OBJROOT="$(pwd)/build/Build/Intermediates.noindex" \
           GIT_COMMIT=_${SHORT_SHA} \
           GCC_PREPROCESSOR_DEFINITIONS='$(inherited) __IO80211_TARGET=__MAC_15_0' \
+          OTHER_LDFLAGS='$(inherited) -Xlinker -no_zero_fill_sections' \
           CONFIGURATION_BUILD_DIR='$(SYMROOT)/$(CONFIGURATION)/Sequoia15' \
           2>&1 | tee /tmp/seq-build.log
         # Print the last error block for visibility, then re-emit failure
