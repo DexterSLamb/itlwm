@@ -1,0 +1,24 @@
+--- a/Headers/IOKit/network/IONetworkController.h	2026-05-03 11:14:58
++++ b/Headers/IOKit/network/IONetworkController.h	2026-05-03 11:14:06
+@@ -1683,8 +1683,21 @@
+     OSMetaClassDeclareReservedUnused( IONetworkController,  4);
+     OSMetaClassDeclareReservedUnused( IONetworkController,  5);
+ #endif  /* !__PRIVATE_SPI__ */
++#if defined(__IO80211_TARGET) && (__IO80211_TARGET >= __MAC_15_0)
++    // Sequoia 15.x: Apple promoted slots 6 and 7 from RESERVED to real virtuals.
++    // We declare them so kexts targeting 15.0+ get the correct symbol names
++    // (__ZN19IONetworkController20allocatePacketNoWaitEj /
++    //  __ZN19IONetworkController18setHardwareAssistsEjj) at the right vtable
++    // slots, which is what OpenCore's vtable patcher expects when binding to
++    // Apple's actual 15.7.x IONetworkController vtable. Signatures inferred
++    // from BootKernelExtensions.kc (MD5 ea9a509a). We never call these methods
++    // ourselves; the declaration only fixes the vtable slot mangled name.
++    virtual mbuf_t allocatePacketNoWait( UInt32 size );
++    virtual IOReturn setHardwareAssists( UInt32 hardwareAssists, UInt32 hardwareAssistsExtra );
++#else
+     OSMetaClassDeclareReservedUnused( IONetworkController,  6);
+     OSMetaClassDeclareReservedUnused( IONetworkController,  7);
++#endif
+     OSMetaClassDeclareReservedUnused( IONetworkController,  8);
+     OSMetaClassDeclareReservedUnused( IONetworkController,  9);
+     OSMetaClassDeclareReservedUnused( IONetworkController, 10);

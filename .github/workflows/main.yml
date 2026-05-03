@@ -34,6 +34,11 @@ jobs:
     - name: Install MacKernelSDK
       run: |
         git clone --depth=1 https://github.com/acidanthera/MacKernelSDK.git
+        # Apply Sequoia 15.7 IONetworkController vtable fix (slots 6 and 7
+        # are real methods, not RESERVED, in 15.7+). Patch is gated on
+        # __IO80211_TARGET >= __MAC_15_0 so Sonoma/Ventura/etc. builds are
+        # binary-identical. See patches/0001-* for the full rationale.
+        ( cd MacKernelSDK && patch -p1 < ../patches/0001-IONetworkController-sequoia-slots-6-7.patch )
 
     - name: Build itlwm
       run: |

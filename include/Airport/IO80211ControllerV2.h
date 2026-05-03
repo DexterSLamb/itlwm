@@ -318,10 +318,16 @@ public:
     virtual const OSString * newModelString() const APPLE_KEXT_OVERRIDE;
     virtual bool createWorkLoop() APPLE_KEXT_OVERRIDE;
     virtual IOReturn getHardwareAddress(IOEthernetAddress *) APPLE_KEXT_OVERRIDE;  // slot 358
-    // NB: setHardwareAddress(IOEthernetAddress*) at slot 359 is now an
-    // IO80211Controller-owned override per 15.7.5 vtable. Declared in our
-    // class so Apple's setHardwareAddressGated dispatcher dispatches into
-    // the correct slot. AirportItlwm overrides the (void*, UInt32) variant.
+    // slot 359: Apple moved setHardwareAddress(IOEthernetAddress*) ownership
+    // to IO80211Controller in 15.7.5 (was IOEthernetController in 14.x).
+    // We MUST declare it here so the inherited vtable slot is bound by
+    // mangled name __ZN17IO80211Controller18setHardwareAddressEPK17IOEthernetAddress
+    // instead of __ZN20IOEthernetController... — OC's vtable patcher fails
+    // when our slot's extern symbol is _RESERVED but Apple's parent slot is
+    // a real method, AND the symbol class names diverge. AirportItlwm itself
+    // overrides only the (void*, UInt32) variant; this slot inherits behavior
+    // from IOEthernetController via plain virtual dispatch.
+    virtual IOReturn setHardwareAddress(const IOEthernetAddress *) APPLE_KEXT_OVERRIDE;  // slot 359
     virtual IOReturn setMulticastMode(bool active) APPLE_KEXT_OVERRIDE;             // slot 360
     virtual IOReturn setPromiscuousMode(bool active) APPLE_KEXT_OVERRIDE;           // slot 362
 
