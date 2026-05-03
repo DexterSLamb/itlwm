@@ -16,14 +16,15 @@ class CCDataStream : public CCStream {
     OSDeclareDefaultStructors(CCDataStream)
 
 public:
-    // Instance methods exported by CoreCapture:
-    //   openSession(char const*)
-    //   openSession(char const*, CCTimestamp const*)
-    //   closeSession(CCDataSession*)
-    //   saveData(char const*, OSData*, void(*)(OSObject*,int,void*), OSObject*, CCDataSession*)
-    //   hasProfileLoaded()
-    // We don't call these directly; the class is needed for OSDynamicCast
-    // after CCStream::withPipeAndName(pipe, name, {stream_type=1}).
+    // Sequoia 15.7.5: Apple exports CCDataStream::withPipeAndName (subclass
+    // factory). Same pattern as CCLogStream. Using CCStream::withPipeAndName
+    // (abstract base) + OSDynamicCast<CCDataStream> yielded a non-NULL but
+    // improperly-initialized CCDataStream pointer. Later wrapped via
+    // CCFaultReporter::withStreamWorkloop, Apple's PeerManager called
+    // ccFaultReporter->registerCallbacks (vtable[0x120]) → kernel helper
+    // page-faulted on null+0x38 (CR2=0x38) deref'ing the broken stream's
+    // ivars. Use the proper subclass factory.
+    static CCDataStream *withPipeAndName(CCPipe *,char const*,CCStreamOptions const*);
 };
 
 #endif /* CCDataStream_h */

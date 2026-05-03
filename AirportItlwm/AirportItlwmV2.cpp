@@ -280,7 +280,18 @@ initCCLogs()
     CCStreamOptions faultReportOptions = { 0 };
     faultReportOptions.stream_type = 1;
     faultReportOptions.console_level = 0xFFFFFFFFFFFFFFFF;
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia 15.7.5: must use the SUBCLASS factory CCDataStream::withPipeAndName,
+    // not the abstract CCStream::withPipeAndName. The abstract factory returns
+    // a CCStream that, when OSDynamicCast<CCDataStream>'d and wrapped via
+    // CCFaultReporter::withStreamWorkloop, produces a faultReporter whose
+    // registerCallbacks (slot 0x120) page-faults on null+0x38 inside Apple's
+    // PeerManager::initWithInterface. Verified via disasm of failing chain
+    // on commit 4a20c48.
+    driverFaultReporter = CCDataStream::withPipeAndName(driverSnapshotsPipe, "FaultReporter", &faultReportOptions);
+#else
     driverFaultReporter = CCStream::withPipeAndName(driverSnapshotsPipe, "FaultReporter", &faultReportOptions);
+#endif
     XYLog("%s driverFaultReporterRet %d\n", __FUNCTION__, driverFaultReporter != NULL);
 
 #if __IO80211_TARGET >= __MAC_15_0
