@@ -402,7 +402,13 @@ public:
     virtual void *getDriverTextLog();                                                                 // 432
     virtual UInt32 selfDiagnosticsReport(int,char const*,UInt);                                       // 433
 
-    virtual void *_seq_pad_slot434() { return nullptr; }                                                                // slot 434 [PV padding]
+    // Sequoia 15.7.5: slot 434 = getFaultReporterFromDriver. Apple's
+    // IO80211Controller::findAndAttachToFaultReporter (called from start
+    // after createIOReporters succeeds) does:
+    //   ivars->_faultReporter = controller->vtable[slot 434]()
+    //   if (!ivars->_faultReporter) panic("No ivars->_faultReporter" @line 3288)
+    // Subclasses MUST override and return a real CCFaultReporter*.
+    virtual void *getFaultReporterFromDriver() { return nullptr; }                                                      // slot 434
     virtual void allocIO80211RecursiveLock();                                                         // 435 [NEW]
     virtual UInt32 getDataQueueDepth(OSObject *);                                                     // 436
     virtual bool wasDynSARInFailSafeMode(void);                                                       // 437

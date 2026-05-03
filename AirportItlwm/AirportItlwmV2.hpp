@@ -199,6 +199,12 @@ public:
     //     deref's the result later for shouldLog calls.
     virtual void *getControllerGlobalLogger() override { return driverLogStream; }
     virtual void *getDriverTextLog() override { return driverLogStream; }
+    // Sequoia 15.7.5 slot 434: Apple's findAndAttachToFaultReporter calls this
+    // and stores into ivars->_faultReporter; if NULL, panics
+    // "No ivars->_faultReporter" @IO80211Controller.cpp:3288. Return our
+    // ccFaultReporter (built via CCFaultReporter::withStreamWorkloop in
+    // initCCLogs).
+    virtual void *getFaultReporterFromDriver() override { return ccFaultReporter; }
 
     // Sequoia 15.7.5: IO80211Controller::postMessage(uint, void*, ulong, uint, void*)
     // does NOT exist in the Apple binary (no vtable slot, no symbol). Removing
