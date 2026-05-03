@@ -186,7 +186,19 @@ public:
     // a guessed slot 426, but slot 426 in 15.7.5 is requiresExplicitMBufRelease.
     // We override getDriverTextLog (slot 436) instead — same purpose, correct slot.
     virtual void *getDriverTextLog() override {
-        return driverLogStream;
+        // Returning NULL is intentional and safe: Apple's
+        // IO80211Controller::findAndAttachToFaultReporter null-checks the
+        // return (disassembly +0x2C: testq %rax,%rax; je skip-block) and
+        // skips the dispatch sequence that would otherwise GPF.
+        // Our previous attempt returned `driverLogStream` built via
+        // CCStream::withPipeAndName + OSDynamicCast<CCLogStream> — but
+        // CCStream::withPipeAndName is the abstract base factory, not the
+        // CCLogStream factory; the cast yields a non-NULL but invalid
+        // CCLogStream* whose vtable deref panics findAndAttachToFaultReporter
+        // at +0x5A on `callq *0x20(%rax)`.  We sacrifice telemetry to
+        // unblock kext load.  TODO(sequoia-cclog): use CCLogStream::withPipeAndName
+        // directly when we have a verified ABI.
+        return nullptr;
     };
 
     // Sequoia 15.7.5: IO80211Controller::postMessage(uint, void*, ulong, uint, void*)
