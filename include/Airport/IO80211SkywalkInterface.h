@@ -196,9 +196,12 @@ public:
     virtual ether_addr *getSelfMacAddr(void);
 #if __IO80211_TARGET >= __MAC_15_0
     // 15.7.5 ground truth slot 417: ___cxa_pure_virtual.
-    // Apple keeps this slot abstract; we emit a no-op padding stub so the
-    // slot exists at the right position without claiming an Apple symbol.
-    virtual void _seq_pad_slot417(void) {}
+    // Apple keeps this slot abstract; we emit a stub returning nullptr (void*)
+    // so the slot exists at the right position. Returning a pointer (rather
+    // than void) hardens the slot against accidental Apple-side dispatch:
+    // if anything reads RAX expecting a pointer, it gets NULL (which Apple
+    // null-checks) instead of garbage.
+    virtual void *_seq_pad_slot417(void) { return nullptr; }
 #else
     virtual void setSelfMacAddr(ether_addr *);
 #endif

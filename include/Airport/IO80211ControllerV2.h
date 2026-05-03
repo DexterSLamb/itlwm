@@ -320,24 +320,19 @@ public:
     virtual IOReturn setMulticastMode(bool active) APPLE_KEXT_OVERRIDE;             // slot 360
     virtual IOReturn setPromiscuousMode(bool active) APPLE_KEXT_OVERRIDE;           // slot 362
 
-    // SLOTS 394-396 placeholders — empirical vtable dump of our binary v.s.
-    // real Sequoia 15.7.5 BootKC IO80211Controller showed every method from
-    // slot 396 onwards was **2 slots earlier than Apple's**. MacKernelSDK's
-    // IOEthernetController vtable ends 2 slots short of Apple's actual
-    // IOEthernetController (which ends at slot 395). We pad with TWO extra
-    // vmethods + one for slot 396 (PV padding in Apple) to push the rest
-    // of IO80211Controller's methods into their correct slots.
-    // Without these, getDriverTextLog landed at slot 430 instead of 432, so
-    // Apple's findAndAttachToFaultReporter called slot 432 (= our padded
-    // slot 434, returning void/garbage) and panicked deref'ing the invalid
-    // CCLogStream* in IO80211Controller.cpp +0x5A. Confirmed via:
-    //   Apple slot 432 = __ZN17IO80211Controller16getDriverTextLogEv
-    //   Our binary slot 432 = _seq_pad_slot434 (BAD)
-    //   Apple slot 395 = __ZN20IOEthernetController31_RESERVED..28Ev
-    //   Our binary slot 393 = same (off by 2)
-    virtual void *_seq_eth_ext_slot394_placeholder() { return nullptr; }                              // slot 394
-    virtual void *_seq_eth_ext_slot395_placeholder() { return nullptr; }                              // slot 395
-    virtual void *_seq_eth_ext_slot396_placeholder() { return nullptr; }                              // slot 396
+    // SLOT 396 placeholder — empirical re-audit (post-commit ddd8d2f) of the
+    // built binary against 15.7.5 BootKC IO80211Controller showed
+    // MacKernelSDK's IOEthernetController vtable actually reaches Apple's
+    // exact slot 395 (last entry _RESERVEDIOEthernetController31). Apple's
+    // IO80211Controller adds **only ONE** ___cxa_pure_virtual padding slot
+    // at index 396 before its first concrete method (createWorkQueue at 397).
+    // The previous fix added 3 placeholders, pushing getDriverTextLog from
+    // slot 432 to slot 434 (off by +2). We now keep ONE placeholder so
+    // index 396 lines up with Apple's PV slot, and createWorkQueue lands at
+    // 397 as Apple expects. Returns void* nullptr — Apple's slot 396 is PV
+    // (Apple never calls it), but should anything dispatch on it the nullptr
+    // return is safe for both pointer and integer interpretations.
+    virtual void *_seq_eth_ext_slot396_placeholder() { return nullptr; }                              // slot 396 [PV padding]
 
     // --- IO80211Controller's own new vmethods, slot order matches 15.7.5 ---
 
