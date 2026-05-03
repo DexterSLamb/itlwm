@@ -320,11 +320,23 @@ public:
     virtual IOReturn setMulticastMode(bool active) APPLE_KEXT_OVERRIDE;             // slot 360
     virtual IOReturn setPromiscuousMode(bool active) APPLE_KEXT_OVERRIDE;           // slot 362
 
-    // SLOT 396 placeholder — Apple's vtable has a ___cxa_pure_virtual at
-    // slot 396 that MacKernelSDK's IOEthernetController doesn't expose
-    // (Apple's IOEthernetController vtable proper ends at slot 395). Force
-    // one extra vmethod here to keep AirportItlwm's slot 397 (createWorkQueue)
-    // landing at the same position as Apple's IO80211Controller.
+    // SLOTS 394-396 placeholders — empirical vtable dump of our binary v.s.
+    // real Sequoia 15.7.5 BootKC IO80211Controller showed every method from
+    // slot 396 onwards was **2 slots earlier than Apple's**. MacKernelSDK's
+    // IOEthernetController vtable ends 2 slots short of Apple's actual
+    // IOEthernetController (which ends at slot 395). We pad with TWO extra
+    // vmethods + one for slot 396 (PV padding in Apple) to push the rest
+    // of IO80211Controller's methods into their correct slots.
+    // Without these, getDriverTextLog landed at slot 430 instead of 432, so
+    // Apple's findAndAttachToFaultReporter called slot 432 (= our padded
+    // slot 434, returning void/garbage) and panicked deref'ing the invalid
+    // CCLogStream* in IO80211Controller.cpp +0x5A. Confirmed via:
+    //   Apple slot 432 = __ZN17IO80211Controller16getDriverTextLogEv
+    //   Our binary slot 432 = _seq_pad_slot434 (BAD)
+    //   Apple slot 395 = __ZN20IOEthernetController31_RESERVED..28Ev
+    //   Our binary slot 393 = same (off by 2)
+    virtual void _seq_eth_ext_slot394_placeholder() {}                              // slot 394
+    virtual void _seq_eth_ext_slot395_placeholder() {}                              // slot 395
     virtual void _seq_eth_ext_slot396_placeholder() {}                              // slot 396
 
     // --- IO80211Controller's own new vmethods, slot order matches 15.7.5 ---
