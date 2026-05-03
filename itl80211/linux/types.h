@@ -110,10 +110,13 @@
 
 #define BUILD_BUG_ON(condition) ((void)sizeof(char[1 - 2*!!(condition)]))
 
+// Sequoia 15.7.5 doesn't route kprintf to unified logging (no serial console
+// either). Use IOLog so XYLog shows up in `log show`. Apple's own IO80211Family
+// logs (e.g., removeReporterFromLegend failure) ARE visible via this path.
 #define XYLog(fmt, x...)\
 do\
 {\
-kprintf("%s: " fmt, "itlwm", ##x);\
+IOLog("%s: " fmt, "itlwm", ##x);\
 }while(0)
 
 typedef UInt8  u8;
