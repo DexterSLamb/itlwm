@@ -38,6 +38,12 @@ struct apple80211_frame_counters;
 struct userPrintCtx;
 struct apple80211_lqm_summary;
 struct apple80211_infra_specific_stats;
+struct apple80211_data_path_interface_stats;
+struct apple80211_data_path_peer_stats;
+struct apple80211_latency_all_ac;
+class IOMemoryDescriptor;
+class IO80211PeerManager;
+class IO80211Controller;
 
 struct TxPacketRequest {
     uint16_t    unk1;       // 0
@@ -84,6 +90,12 @@ public:
     virtual const char *classNameOverride(void) APPLE_KEXT_OVERRIDE;
     virtual IOReturn setPromiscuousModeEnable(bool, UInt) APPLE_KEXT_OVERRIDE;
     virtual void *createPeerManager(void);
+#if __IO80211_TARGET >= __MAC_15_0
+    // 15.7.5 ground truth slot 355: createPeer.
+    // Earlier headers omitted this and shifted postMessage..forwardInfraRelayPackets
+    // by -1.
+    virtual void *createPeer(unsigned char const*, IO80211PeerManager *);
+#endif
     virtual void postMessage(UInt,void *,unsigned long,bool);
     virtual IOReturn reportDataPathEvents(UInt,void *,unsigned long,bool);
     virtual IOReturn recordOutputPackets(TxSubmissionDequeueStats *,TxSubmissionDequeueStats *);
@@ -111,6 +123,10 @@ public:
     virtual void setScanningState(UInt,bool,apple80211_scan_data *,int);
     virtual void setDataPathState(bool);
     virtual void *getScanManager(void);
+#if __IO80211_TARGET >= __MAC_15_0
+    // 15.7.5 ground truth slot 375: getController.
+    virtual IO80211Controller *getController(void);
+#endif
     virtual void updateLinkParameters(apple80211_interface_availability *);
     virtual void updateInterfaceCoexRiskPct(unsigned long long);
     virtual void setLQM(unsigned long long);
@@ -143,6 +159,10 @@ public:
     virtual void setWoWEnabled(bool);
     virtual bool wowEnabled(void);
     virtual void printDataPath(userPrintCtx *);
+#if __IO80211_TARGET >= __MAC_15_0
+    // 15.7.5 ground truth slot 397: getDataQueueDepth.
+    virtual UInt64 getDataQueueDepth(void);
+#endif
     virtual bool findOrCreateFlowQueue(IO80211FlowQueueHash);
     virtual UInt64 findOrCreateFlowQueueWithCache(IO80211FlowQueueHash,bool *);
     virtual UInt64 findExistingFlowQueue(IO80211FlowQueueHash);
@@ -156,15 +176,32 @@ public:
     virtual void releaseLinkQualityMonitor(IO80211Peer *);
     virtual void *getP2PSkywalkPeerMgr(void);
     virtual bool isCommandProhibited(int);
+#if __IO80211_TARGET >= __MAC_15_0
+    // 15.7.5 ground truth: slot 411 owns findPeer in IO80211SkywalkInterface
+    // (research/sequoia-port/diff/15.7.5-IO80211SkywalkInterface-vtable-REAL.txt).
+    // Earlier headers omitted this and shifted setNotificationProperty..getPacketPool
+    // by -1, which broke OC vtable patching for several InfraInterface symbols.
+    virtual void *findPeer(ether_addr &);
+#endif
     virtual void setNotificationProperty(OSSymbol const*,OSObject const*);
     virtual void *getWorkerMatchingDict(OSString *);
+#if __IO80211_TARGET >= __MAC_15_0
+    // 15.7.5 ground truth slot 414: init(IOService*, ether_addr*) — extra
+    // ether_addr* argument was added in Sequoia.
+    virtual bool init(IOService *, ether_addr *);
+#else
     virtual bool init(IOService *);
+#endif
     virtual bool isInterfaceEnabled(void);
     virtual ether_addr *getSelfMacAddr(void);
-    // 15.7.5 ground truth slot 417: setSelfMacAddr is now an
-    // IO80211SkywalkInterface method (was NEW per drift report).
-    // Keep declared in both target branches.
+#if __IO80211_TARGET >= __MAC_15_0
+    // 15.7.5 ground truth slot 417: ___cxa_pure_virtual.
+    // Apple keeps this slot abstract; we emit a no-op padding stub so the
+    // slot exists at the right position without claiming an Apple symbol.
+    virtual void _seq_pad_slot417(void) {}
+#else
     virtual void setSelfMacAddr(ether_addr *);
+#endif
     virtual void *getPacketPool(OSString *);
     virtual void *getLogger(void);
     virtual IOReturn handleSIOCSIFADDR(void);
@@ -176,10 +213,13 @@ public:
     virtual UInt64 getRxQueueCapacity(void);
     virtual void updateRxCounter(unsigned long long);
     virtual void *getMultiCastQueue(void);
-    // 15.7.5 ground truth slot 429: getCurrentBssid is also present in Sequoia
-    // (was previously thought to be Sonoma-only). Source:
-    // research/sequoia-port/diff/15.7.5-IO80211SkywalkInterface-vtable.txt
+#if __IO80211_TARGET < __MAC_15_0
+    // Sonoma-only: getCurrentBssid was a real IO80211SkywalkInterface
+    // vmethod prior to Sequoia. In 15.7.5 the slot got recycled to
+    // getAssocState — see research/sequoia-port/diff/15.7.5-IO80211SkywalkInterface-vtable-REAL.txt
+    // (slot 429 = __ZN23IO80211SkywalkInterface13getAssocStateEv, no getCurrentBssid).
     virtual void *getCurrentBssid(void);
+#endif
     virtual int getAssocState(void);
     virtual void notifyQueueState(apple80211_wme_ac,unsigned short);
     virtual int getTxHeadroom(void);
@@ -195,10 +235,39 @@ public:
     virtual int getEventPipeSize(void);
     virtual UInt64 createEventPipe(IO80211APIUserClient *);
     virtual void destroyEventPipe(IO80211APIUserClient *);
+#if __IO80211_TARGET >= __MAC_15_0
+    // 15.7.5 ground truth (research/sequoia-port/diff/15.7.5-IO80211SkywalkInterface-vtable-REAL.txt):
+    // setUserBufferInfo (slot 444) was inserted between destroyEventPipe (443)
+    // and postMessageIOUC (445). The previous header omitted it, shifting
+    // postMessageIOUC..getRingMD by -1 vs Apple.
+    virtual IOReturn setUserBufferInfo(IOMemoryDescriptor *, unsigned long long);
+#endif
     virtual void postMessageIOUC(char const*,UInt,void *,unsigned long);
     virtual bool isIOUCPipeOpened(void);
     virtual void *getRingMD(IO80211APIUserClient *,unsigned long long);
-    
+#if __IO80211_TARGET >= __MAC_15_0
+    // 15.7.5 ground truth slots 448-461: methods that exist in Sequoia's
+    // IO80211SkywalkInterface vtable but were never declared in our header.
+    // Without these, AirportItlwmSkywalkInterface's vtable ends 14 slots
+    // short of Apple's, breaking inheritance for IO80211InfraInterface
+    // overrides at slots 462-466 and putting our IO80211InfraProtocol PV
+    // pad slots at the wrong offsets.
+    virtual void attachPeer(ether_addr *);
+    virtual void detachPeer(ether_addr *);
+    virtual void setDebugTrafficReport(bool);
+    virtual IOReturn getDataPathInterfaceStats(apple80211_data_path_interface_stats *);
+    virtual IOReturn getDataPathPeerStats(apple80211_data_path_peer_stats *);
+    virtual unsigned long long getLastQueuePacketTime(ether_addr *);
+    virtual unsigned long long getLastRxUnicastLinkActivityTime(ether_addr *);
+    virtual void updateInterfaceDataStats(apple80211_data_path_interface_stats *);
+    virtual void updatePeerDataStats(apple80211_data_path_peer_stats *);
+    virtual void logTxLatency(unsigned char *, UInt, unsigned long long);
+    virtual void logRxLatency(UInt, unsigned long long);
+    virtual void getNClearTxRxLatency(apple80211_latency_all_ac *, apple80211_latency_all_ac *);
+    virtual void getLastTxTimeStamp(unsigned long long &);
+    virtual void getLastRxTimeStamp(unsigned long long &);
+#endif
+
 public:
     OSString *setInterfaceRole(UInt role);
     void *setInterfaceId(UInt id);

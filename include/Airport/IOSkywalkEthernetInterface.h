@@ -36,18 +36,12 @@ public:
     virtual void *getInterfaceSubFamily(void) APPLE_KEXT_OVERRIDE;
     virtual UInt getInitialMedia(void) APPLE_KEXT_OVERRIDE;
     virtual const char *getBSDNamePrefix(void) APPLE_KEXT_OVERRIDE;
-#if __IO80211_TARGET >= __MAC_15_0
-    // 15.7.5 ground truth: NEW vmethod at slot 334 in
-    // IOSkywalkEthernetInterface (was previously a parent
-    // IOSkywalkNetworkInterface RESERVED slot). Source:
-    // research/sequoia-port/diff/15.7.5-IOSkywalkEthernetInterface-vtable.txt
-    // (slot 334 = __ZN26IOSkywalkEthernetInterface39registerNetworkInterfaceWithLogicalLinkE…)
-    //
-    // Inserting this declaration shifts all subsequent slots in
-    // IO80211SkywalkInterface / IO80211InfraInterface / IO80211InfraProtocol
-    // down by one, matching the kernel's new vtable layout.
-    virtual IOReturn registerNetworkInterfaceWithLogicalLink(IOSkywalkEthernetInterface::RegistrationInfo const*, IOSkywalkLogicalLink*, IOSkywalkPacketBufferPool*, IOSkywalkPacketBufferPool*, UInt);
-#endif
+    // 15.7.5 ground truth (research/sequoia-port/diff/15.7.5-IOSkywalkEthernetInterface-vtable-REAL.txt):
+    // registerNetworkInterfaceWithLogicalLink lives on IOSkywalkNetworkInterface
+    // (slot 284), NOT IOSkywalkEthernetInterface. Earlier headers wrongly declared
+    // it here for Sequoia, which inserted an extra slot at 334 and shifted
+    // getHardwareAddress..hwConfigNicProxyData by +1, breaking OC vtable
+    // patching for __ZN26IOSkywalkEthernetInterface20hwConfigNicProxyDataEP15nicproxy_info_s.
     virtual void getHardwareAddress(ether_addr *);
     virtual void setHardwareAddress(ether_addr *);
     virtual void setLinkLayerAddress(ether_addr *);

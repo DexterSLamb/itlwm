@@ -71,15 +71,11 @@ public:
     virtual void setInfraSpecificFrameStats(apple80211_stat_report *,apple80211_infra_specific_stats *) APPLE_KEXT_OVERRIDE;
 #endif
     virtual SInt64 getWmeTxCounters(unsigned long long *) APPLE_KEXT_OVERRIDE;
-#if __IO80211_TARGET >= __MAC_15_0
-    // 15.7.5 ground truth: slots 392-394 of IO80211InfraInterface vtable now
-    // own setEnabledBySystem / enabledBySystem / willRoam (they were on
-    // IO80211SkywalkInterface in 14.x). Source:
-    // research/sequoia-port/diff/15.7.5-IO80211InfraInterface-vtable.txt
-    virtual void setEnabledBySystem(bool);
-    virtual bool enabledBySystem(void);
-    virtual bool willRoam(ether_addr *,UInt);
-#else
+#if __IO80211_TARGET < __MAC_15_0
+    // Sonoma-only: setEnabledBySystem / enabledBySystem / willRoam exist on
+    // IO80211SkywalkInterface in Sonoma (overridden by InfraInterface). In
+    // Sequoia 15.7.5 they were removed entirely from the IO80211 family
+    // (verified absent via `nm` on the real Sequoia BootKC).
     virtual void setEnabledBySystem(bool) APPLE_KEXT_OVERRIDE;
     virtual bool enabledBySystem(void) APPLE_KEXT_OVERRIDE;
     virtual bool willRoam(ether_addr *,UInt) APPLE_KEXT_OVERRIDE;
@@ -92,18 +88,30 @@ public:
     virtual int getAssocState(void) APPLE_KEXT_OVERRIDE;
     virtual void *getLQMSummary(apple80211_lqm_summary *) APPLE_KEXT_OVERRIDE;
 #if __IO80211_TARGET >= __MAC_15_0
-    // 15.7.5 ground truth: slot 448 setLinkStateInternal got a 5th arg
-    // (apple80211_link_changed_event_data&). Slots 449/450 setPoweredOnByUser
-    // and setCurrentBssid are NEW. Source:
-    // research/sequoia-port/diff/15.7.5-IO80211InfraInterface-vtable.txt
-    virtual IOReturn setLinkStateInternal(IO80211LinkState,uint,bool,uint,apple80211_link_changed_event_data &);
-    virtual void setPoweredOnByUser(bool);
-    virtual void setCurrentBssid(ether_addr *);
-#else
+    // 15.7.5 ground truth (research/sequoia-port/diff/15.7.5-IO80211InfraInterface-vtable-REAL.txt):
+    //   slot 462: setLinkStateInternal (4 args — Sonoma 14.8.5 has a 5-arg
+    //             variant with apple80211_link_changed_event_data&, but
+    //             Sequoia removed that overload)
+    //   slot 463: setCurrentApAddress (NEW — not setCurrentBssid)
+    //   slot 464: setWCL_ADVISORTY_INFO
+    //   slot 465: getWCL_TX_RX_LATENCY
+    //   slot 466: createLQMData
+    // setPoweredOnByUser and setCurrentBssid do NOT exist in real 15.7.5
+    // IO80211InfraInterface; the earlier "drift" doc was based on stale
+    // Sonoma-mislabelled-as-Sequoia data and is wrong.
     virtual IOReturn setLinkStateInternal(IO80211LinkState,uint,bool,uint);
-#endif
+    virtual void setCurrentApAddress(ether_addr *);
     virtual void setWCL_ADVISORTY_INFO(apple80211_wcl_advisory_info *);
     virtual void *getWCL_TX_RX_LATENCY(apple80211_wcl_tx_rx_latency *);
+    virtual void createLQMData(void);
+#else
+    virtual IOReturn setLinkStateInternal(IO80211LinkState,uint,bool,uint);
+    virtual void setWCL_ADVISORTY_INFO(apple80211_wcl_advisory_info *);
+    virtual void *getWCL_TX_RX_LATENCY(apple80211_wcl_tx_rx_latency *);
+#endif
+    // hwConfigNicProxyData — in real 15.7.5 IO80211InfraInterface overrides
+    // IOSkywalkEthernetInterface's slot 342. We let the parent's declaration
+    // hold the slot (no need to re-declare here for ABI matching).
     
 public:
     char _data[0x120];
