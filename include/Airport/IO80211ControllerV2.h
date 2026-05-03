@@ -335,9 +335,9 @@ public:
     //   Our binary slot 432 = _seq_pad_slot434 (BAD)
     //   Apple slot 395 = __ZN20IOEthernetController31_RESERVED..28Ev
     //   Our binary slot 393 = same (off by 2)
-    virtual void _seq_eth_ext_slot394_placeholder() {}                              // slot 394
-    virtual void _seq_eth_ext_slot395_placeholder() {}                              // slot 395
-    virtual void _seq_eth_ext_slot396_placeholder() {}                              // slot 396
+    virtual void *_seq_eth_ext_slot394_placeholder() { return nullptr; }                              // slot 394
+    virtual void *_seq_eth_ext_slot395_placeholder() { return nullptr; }                              // slot 395
+    virtual void *_seq_eth_ext_slot396_placeholder() { return nullptr; }                              // slot 396
 
     // --- IO80211Controller's own new vmethods, slot order matches 15.7.5 ---
 
@@ -356,7 +356,7 @@ public:
     // driver hook). Provide a no-op concrete impl so AirportItlwm's vtable
     // has SOMETHING at this slot; the slot index is what matters for OC's
     // vtable patcher to bind correctly to the parent vtable layout.
-    virtual void _seq_pad_slot405() {}                                              // slot 405 [PV padding]
+    virtual void *_seq_pad_slot405() { return nullptr; }                                              // slot 405 [PV padding]
     virtual UInt32 hardwareOutputQueueDepth();                                      // slot 406
     virtual SInt32 performCountryCodeOperation(IO80211CountryCodeOp);               // slot 407
     virtual void dataLinkLayerAttachComplete();                                     // slot 408
@@ -385,7 +385,7 @@ public:
     virtual IO80211FlowQueueLegacy* requestFlowQueue(FlowIdMetadata const*);                          // 423
     virtual void releaseFlowQueue(IO80211FlowQueue *);                                                // 424
     virtual bool getLogPipes(CCPipe**, CCPipe**, CCPipe**);                                           // 425
-    virtual void _seq_pad_slot426() {}                                                                // slot 426 [PV padding]
+    virtual void *_seq_pad_slot426() { return nullptr; }                                                                // slot 426 [PV padding]
     virtual void enableFeatureForLoggingFlags(unsigned long long);                                    // 427
     virtual IOReturn requestQueueSizeAndTimeout(unsigned short *, unsigned short *);                  // 428
     virtual IOReturn enablePacketTimestamping(void);                                                  // 429
@@ -400,7 +400,7 @@ public:
     virtual void *getDriverTextLog();                                                                 // 432
     virtual UInt32 selfDiagnosticsReport(int,char const*,UInt);                                       // 433
 
-    virtual void _seq_pad_slot434() {}                                                                // slot 434 [PV padding]
+    virtual void *_seq_pad_slot434() { return nullptr; }                                                                // slot 434 [PV padding]
     virtual void allocIO80211RecursiveLock();                                                         // 435 [NEW]
     virtual UInt32 getDataQueueDepth(OSObject *);                                                     // 436
     virtual bool wasDynSARInFailSafeMode(void);                                                       // 437
