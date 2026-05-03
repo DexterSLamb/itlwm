@@ -27,6 +27,22 @@ public:
     virtual bool init() override;
     bool bindController(AirportItlwm *controller);
 
+    // Sequoia 15.7.5 workaround: skip super::start (= IO80211InfraInterface::start
+    // → IO80211SkywalkInterface::start → IO80211PeerManager::initWithInterface),
+    // which crashes the kernel inside CCFaultReporter::registerCallbacks
+    // (vtable[0x120]) — Apple expects our SkywalkInterface to provide a
+    // particular vtable[byte 0x38] return value (likely interface name as
+    // OSString/char*) which we don't, leading to null+0x38 page fault inside
+    // a kernel helper called from registerCallbacks.
+    //
+    // PeerManager / AWDL is not implementable for our Intel WiFi V2 path
+    // anyway (per CLAUDE.md: setAWDL_* returns kIOReturnUnsupported). Skip
+    // the entire super::start chain. registerService() (called by us
+    // post-start in AirportItlwm::start) still triggers IOKit matching for
+    // the BSD layer; registerEthernetInterface() already wired the BSD
+    // ifnet path.
+    virtual bool start(IOService *provider) override;
+
     // Sequoia 15.7.5 slot 79 (IOSkywalkNetworkInterface::setInterfaceEnable):
     // Override so that when Apple flips the interface to enabled, we also
     // report a link-status update and let the InfraInterface base know.
