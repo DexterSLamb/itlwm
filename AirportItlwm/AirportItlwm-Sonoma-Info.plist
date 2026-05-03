@@ -34,8 +34,6 @@
 			<integer>70000</integer>
 			<key>IOProviderClass</key>
 			<string>IOPCIEDeviceWrapper</string>
-			<key>IOResourceMatch</key>
-			<string>IOBSD</string>
 		</dict>
 		<key>itlwm</key>
 		<dict>
