@@ -214,7 +214,16 @@ public:
     virtual void setSelfMacAddr(ether_addr *);
 #endif
     virtual void *getPacketPool(OSString *);
+    // Sequoia 15.7.5 BootKC does NOT export IO80211SkywalkInterface::getLogger
+    // (only AppleBCMWLAN* subclasses define it as const). Provide an inline
+    // concrete impl returning nullptr so our vtable slot is owned by us
+    // (kxld doesn't need to resolve any extern symbol). Sonoma 14.x kept the
+    // pure declaration; previously fine because 14.x BootKC exported it.
+#if __IO80211_TARGET >= __MAC_15_0
+    virtual void *getLogger(void) { return nullptr; }
+#else
     virtual void *getLogger(void);
+#endif
     virtual IOReturn handleSIOCSIFADDR(void);
     virtual IOReturn debugHandler(apple80211_debug_command *);
     virtual void statsDump(void);
