@@ -342,37 +342,6 @@ init(IOService *provider)
 //    return NULL;
 //}
 
-#if __IO80211_TARGET >= __MAC_15_0
-// Sequoia 15.7.5 workaround — see header comment.
-// Skip super::start (= IO80211InfraInterface::start chain) which crashes the
-// kernel inside CCFaultReporter::registerCallbacks. PeerManager / AWDL stack
-// is not implementable on our Intel WiFi V2 path.
-//
-// What super::start would normally do that we skip:
-//   - IO80211InfraInterface::start: trivial wrapper, calls Skywalk::start
-//   - IO80211SkywalkInterface::start: registers IOService, calls
-//     PeerManager::withInterface (creates AWDL peer manager) — CRASHES HERE
-//   - PeerManager::initWithInterface: derefs ccFaultReporter for callback wiring
-//
-// What we DO need (handled elsewhere in AirportItlwm::start):
-//   - registerEthernetInterface(): wires BSD ifnet via Skywalk Tx/Rx queues
-//   - super::start in AirportItlwm: handles controller-level service init
-//
-// Just call IOService::start (the IOKit base) to satisfy the standard
-// IOService matching contract, and skip everything 80211-specific.
-bool AirportItlwmSkywalkInterface::start(IOService *provider)
-{
-    XYLog("%s skipping super::start (Sequoia AWDL/PeerMgr workaround)\n", __PRETTY_FUNCTION__);
-    // IOService::start with the standard `attach` semantics. Don't go up the
-    // IO80211 inheritance chain.
-    if (!IOService::start(provider)) {
-        XYLog("%s IOService::start failed\n", __PRETTY_FUNCTION__);
-        return false;
-    }
-    return true;
-}
-#endif
-
 IOReturn AirportItlwmSkywalkInterface::
 getSSID(struct apple80211_ssid_data *sd)
 {
