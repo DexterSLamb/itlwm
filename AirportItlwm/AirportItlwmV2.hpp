@@ -160,6 +160,18 @@ public:
     virtual SInt32 apple80211_ioctl(IO80211SkywalkInterface *,unsigned long,void *, bool, bool) override;
     virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *) override;
     virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *,void *) override;
+#else
+    // Sequoia 15.7.5: stub-override the 4 apple80211_ioctl_get/set slots so our
+    // vtable points to our own thunks, not parent IO80211Controller methods.
+    // OC's prelinked vtable patcher cannot resolve cross-kext parent vtable
+    // entries when the parent kext (IO80211Family) uses chained-fixup pointers
+    // — leaving these slots as `extern parent_symbol` triggers
+    // "OCAK: Failed to patch symbol __ZN17IO80211Controller20apple80211_ioctl_*".
+    // The thunks just forward to super:: so behavior is unchanged.
+    virtual SInt32 apple80211_ioctl_get(IO80211SkywalkInterface *, void *, bool, bool) override;
+    virtual SInt32 apple80211_ioctl_set(IO80211SkywalkInterface *, void *, bool, bool) override;
+    virtual SInt32 apple80211_ioctl_get(IO80211VirtualInterface *, void *, bool, bool) override;
+    virtual SInt32 apple80211_ioctl_set(IO80211VirtualInterface *, void *, bool, bool) override;
 #endif
 
     bool createMediumTables(const IONetworkMedium **primary);

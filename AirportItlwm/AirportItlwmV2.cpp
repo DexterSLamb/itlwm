@@ -1244,6 +1244,18 @@ SInt32 AirportItlwm::apple80211SkywalkRequest(UInt request,int cmd,IO80211Skywal
         XYLog("%s 2 cmd: %s request: %d\n", __FUNCTION__, convertApple80211IOCTLToString(cmd), request);
     return kIOReturnUnsupported;
 }
+#else
+// Sequoia 15.7.5 stub-overrides — see comment in AirportItlwmV2.hpp.
+// Pure forwarders to super:: so behavior is unchanged; the only purpose is to
+// own the vtable slot ourselves and avoid OC's vtable-patcher cross-kext issue.
+SInt32 AirportItlwm::apple80211_ioctl_get(IO80211SkywalkInterface *itf, void *d, bool b1, bool b2)
+{ return super::apple80211_ioctl_get(itf, d, b1, b2); }
+SInt32 AirportItlwm::apple80211_ioctl_set(IO80211SkywalkInterface *itf, void *d, bool b1, bool b2)
+{ return super::apple80211_ioctl_set(itf, d, b1, b2); }
+SInt32 AirportItlwm::apple80211_ioctl_get(IO80211VirtualInterface *itf, void *d, bool b1, bool b2)
+{ return super::apple80211_ioctl_get(itf, d, b1, b2); }
+SInt32 AirportItlwm::apple80211_ioctl_set(IO80211VirtualInterface *itf, void *d, bool b1, bool b2)
+{ return super::apple80211_ioctl_set(itf, d, b1, b2); }
 #endif
 
 IOReturn AirportItlwm::enableAdapter(IONetworkInterface *netif)
