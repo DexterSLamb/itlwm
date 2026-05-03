@@ -21,7 +21,15 @@ class TxSubmissionDequeueStats;
 class TxCompletionEnqueueStats;
 class IO80211NetworkPacket;
 class PacketSkywalkScratch;
+// Sequoia 15.7.5 mangling: Apple's IO80211SkywalkInterface methods take
+// `IO80211FlowQueueHash` mangled as struct ("20IO80211FlowQueueHash"), not the
+// typedef'd UInt64 alias ("y"). Use a single-member struct so ABI is identical
+// (one 8-byte register) but mangling matches Apple's BootKC export.
+#if __IO80211_TARGET >= __MAC_15_0
+struct IO80211FlowQueueHash { UInt64 hash; };
+#else
 typedef UInt64 IO80211FlowQueueHash;
+#endif
 class IO80211Peer;
 class CCPipe;
 class IO80211APIUserClient;

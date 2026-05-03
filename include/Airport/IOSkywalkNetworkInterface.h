@@ -13,7 +13,12 @@
 
 #include "IOSkywalkInterface.h"
 
-typedef UInt if_link_status;
+// Sequoia 15.7.5: if_link_status is a struct in Apple's BootKC; mangled symbol
+// uses class name "if_link_status" not the underlying integer type. Typedef'd
+// alias to UInt would mangle as "j" (uint), making our reportDetailedLinkStatus
+// undef symbol mismatch Apple's __ZN..._EPK14if_link_status form. Use a forward
+// struct decl instead for both targets — IOKit doesn't reference layout.
+struct if_link_status;
 class IOSkywalkPacketQueue;
 class IOSkywalkLogicalLink;
 class IOSkywalkPacketBufferPool;
@@ -51,9 +56,19 @@ public:
     virtual SInt32 initBSDInterfaceParameters(ifnet_init_eparams *,sockaddr_dl **) = 0;
     virtual bool prepareBSDInterface(ifnet_t,UInt);
     virtual void finalizeBSDInterface(ifnet_t,UInt);
+    // Sequoia 15.7.5 ground truth: Apple exports __ZNK25IOSkywalkNetworkInterface15getBSDInterfaceEv
+    // and __ZNK25IOSkywalkNetworkInterface10getBSDNameEv (CONST). 14.x had non-const variants.
+    // Without the const qualifier our binary references the wrong (non-const) mangled symbol
+    // and kxld rejects with "undefined symbol" at OC inject time. (Sequoia branch only.)
+#if __IO80211_TARGET >= __MAC_15_0
+    virtual ifnet_t getBSDInterface(void) const;
+    virtual void setBSDName(char const*);
+    virtual const char *getBSDName(void) const;
+#else
     virtual ifnet_t getBSDInterface(void);
     virtual void setBSDName(char const*);
     virtual const char *getBSDName(void);
+#endif
     virtual IOReturn processBSDCommand(ifnet_t,UInt,void *);
     virtual IOReturn processInterfaceCommand(ifdrv *);
     virtual IOReturn interfaceAdvisoryEnable(bool);
@@ -62,10 +77,19 @@ public:
     virtual IOReturn handleChosenMedia(UInt);
     virtual void *getSupportedMediaArray(UInt *,UInt *);
     virtual void *getPacketTapInfo(UInt *,UInt *);
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia const-qualified
+    virtual UInt getUnsentDataByteCount(UInt *,UInt *,UInt) const;
+#else
     virtual UInt getUnsentDataByteCount(UInt *,UInt *,UInt);
+#endif
     virtual UInt32 getSupportedWakeFlags(UInt *);
     virtual void enableNetworkWake(UInt);
+#if __IO80211_TARGET >= __MAC_15_0
+    virtual void calculateRingSizeForQueue(IOSkywalkPacketQueue const*,UInt *) const;
+#else
     virtual void calculateRingSizeForQueue(IOSkywalkPacketQueue const*,UInt *);
+#endif
     virtual UInt getMaxTransferUnit(void);
     virtual void setMaxTransferUnit(UInt);
     virtual UInt getMinPacketSize(void);
