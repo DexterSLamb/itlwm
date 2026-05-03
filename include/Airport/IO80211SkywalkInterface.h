@@ -203,13 +203,17 @@ public:
     virtual bool isInterfaceEnabled(void);
     virtual ether_addr *getSelfMacAddr(void);
 #if __IO80211_TARGET >= __MAC_15_0
-    // 15.7.5 ground truth slot 417: ___cxa_pure_virtual.
-    // Apple keeps this slot abstract; we emit a stub returning nullptr (void*)
-    // so the slot exists at the right position. Returning a pointer (rather
-    // than void) hardens the slot against accidental Apple-side dispatch:
-    // if anything reads RAX expecting a pointer, it gets NULL (which Apple
-    // null-checks) instead of garbage.
-    virtual void *_seq_pad_slot417(void) { return nullptr; }
+    // 15.7.5 ground truth slot 417: ___cxa_pure_virtual in base
+    // IO80211SkywalkInterface; Apple's concrete subclass AppleBCMWLANSkywalkInterface
+    // fills it with setMacAddress(ether_addr&) returning IOReturn.
+    // Source: research/sequoia-port/kdk-vtable-dump/applebcmwlan-vs-base.txt
+    //   ZTV byte 0xd08 slot 417: base = ___cxa_pure_virtual,
+    //   Apple = AppleBCMWLANSkywalkInterface::setMacAddress(ether_addr&)
+    // We provide a default impl returning kIOReturnUnsupported so the slot is
+    // owned by us (no kxld pure-virtual symbol resolution) and any caller that
+    // dispatches into this slot gets a defined non-success error rather than
+    // garbage. Subclasses may override if they ever support runtime MAC change.
+    virtual IOReturn setMacAddress(ether_addr &) { return kIOReturnUnsupported; }
 #else
     virtual void setSelfMacAddr(ether_addr *);
 #endif

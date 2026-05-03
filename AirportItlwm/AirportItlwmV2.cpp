@@ -402,6 +402,25 @@ bool AirportItlwm::start(IOService *provider)
 #endif
 
     TRACE_STEP("02_pre_super_start");
+
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia 15.7.x: Apple's IO80211Controller::start no longer indirectly
+    // invokes createWorkQueue (Apple's base impl is a stub returning 0; not
+    // called by super::start). But IO80211SkywalkInterface::start +0xD5 calls
+    // controller->getWorkQueue() and stores result in ivars[0x110]+0x38.
+    // IO80211Glue::initWithOptions @0x1a194 hard-checks that field non-NULL;
+    // if NULL, returns false, parent free() path crashes in
+    // IO80211Glue::freeResources on uninitialized list head (CR2=0).
+    // Eager-init _fWorkloop here so super::start sees a valid workqueue.
+    // KDK source: research/sequoia-port/kdk-extract/.../IO80211Family.kext
+    // Documented in docs/009-sequoia-fix-plan.md.
+    if (createWorkQueue() == NULL) {
+        TRACE_STEP("FAIL_createWorkQueue_pre_super");
+        return false;
+    }
+    TRACE_STEP("02b_post_createWorkQueue_pre_super");
+#endif
+
     if (!super::start(provider)) {
         TRACE_STEP("FAIL_super_start");
         return false;
