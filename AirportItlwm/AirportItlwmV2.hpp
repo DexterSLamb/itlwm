@@ -185,21 +185,20 @@ public:
     // The previous implementation overrode "getControllerGlobalLogger" at
     // a guessed slot 426, but slot 426 in 15.7.5 is requiresExplicitMBufRelease.
     // We override getDriverTextLog (slot 436) instead — same purpose, correct slot.
-    virtual void *getDriverTextLog() override {
-        // Returning NULL is intentional and safe: Apple's
-        // IO80211Controller::findAndAttachToFaultReporter null-checks the
-        // return (disassembly +0x2C: testq %rax,%rax; je skip-block) and
-        // skips the dispatch sequence that would otherwise GPF.
-        // Our previous attempt returned `driverLogStream` built via
-        // CCStream::withPipeAndName + OSDynamicCast<CCLogStream> — but
-        // CCStream::withPipeAndName is the abstract base factory, not the
-        // CCLogStream factory; the cast yields a non-NULL but invalid
-        // CCLogStream* whose vtable deref panics findAndAttachToFaultReporter
-        // at +0x5A on `callq *0x20(%rax)`.  We sacrifice telemetry to
-        // unblock kext load.  TODO(sequoia-cclog): use CCLogStream::withPipeAndName
-        // directly when we have a verified ABI.
-        return nullptr;
-    };
+    // Sequoia 15.7.5 — return REAL CCLogStream* (built via
+    // CCLogStream::withPipeAndName subclass factory in initCCLogs). Both
+    // slots 426 (getControllerGlobalLogger) and 432 (getDriverTextLog) need
+    // a valid CCLogStream pointer:
+    //   - slot 426: IO80211ControllerMonitor::initWithControllerAndProvider
+    //     stores it at monitor->ivars[0x10][0xdb0] and null-checks. NULL →
+    //     init fails → withControllerAndProvider returns NULL → createIOReporters
+    //     fails → IO80211Controller::start returns false. This is what was
+    //     blocking start (commit 21e5c21 trace_step = FAIL_super_start).
+    //   - slot 432: IO80211ScanManager::commonInit + findAndAttachToFaultReporter
+    //     consume this; null-check exists at the latter, but ScanManager
+    //     deref's the result later for shouldLog calls.
+    virtual void *getControllerGlobalLogger() override { return driverLogStream; }
+    virtual void *getDriverTextLog() override { return driverLogStream; }
 
     // Sequoia 15.7.5: IO80211Controller::postMessage(uint, void*, ulong, uint, void*)
     // does NOT exist in the Apple binary (no vtable slot, no symbol). Removing

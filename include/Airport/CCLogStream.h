@@ -45,6 +45,15 @@ public:
     virtual void clearConsoleLogFlag(unsigned long long);
     
 public:
+    // Sequoia 15.7.5 ground truth: Apple exports CCLogStream::withPipeAndName.
+    // This is the SUBCLASS factory (constructs an actual CCLogStream), unlike
+    // CCStream::withPipeAndName which is the abstract base. We previously used
+    // the base factory + OSDynamicCast<CCLogStream> (returns invalid pointer
+    // that caused findAndAttachToFaultReporter panic at +0x5A). Use the proper
+    // subclass factory now that we know it's exported.
+    static CCLogStream *withPipeAndName(CCPipe *,char const*,CCStreamOptions const*);
+
+public:
     uint8_t filter[0x98];
 };
 

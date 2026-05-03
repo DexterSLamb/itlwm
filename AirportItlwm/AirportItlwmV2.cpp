@@ -298,19 +298,18 @@ initCCLogs()
     // createReportersAndLegend does fLogStream->shouldLog(1) which derefs
     // ((CCLogStream*)x)->ivars[0x90][0x58]. Must return a real CCLogStream
     // built from CCStream::withPipeAndName + OSDynamicCast<CCLogStream>.
-    driverLogStream = NULL;
+    // Use the SUBCLASS factory CCLogStream::withPipeAndName (Apple-exported,
+    // mangled __ZN11CCLogStream15withPipeAndNameEP6CCPipePKcPK15CCStreamOptions)
+    // to get a real CCLogStream*. Previous attempt used CCStream:: (abstract
+    // base) + OSDynamicCast — returned an invalid CCLogStream-cast that
+    // panicked findAndAttachToFaultReporter +0x5A on vtable deref. The real
+    // factory constructs a fully-initialized CCLogStream subclass instance.
+    OSSafeReleaseNULL(driverLogStream);
     {
         CCStreamOptions logStreamOptions = { 0 };
         logStreamOptions.stream_type = 0;
         logStreamOptions.console_level = 0xFFFFFFFFFFFFFFFF;
-        CCStream *logStreamBase = CCStream::withPipeAndName(driverLogPipe, "DriverLogStream", &logStreamOptions);
-        if (logStreamBase) {
-            driverLogStream = OSDynamicCast(CCLogStream, logStreamBase);
-            if (!driverLogStream)
-                logStreamBase->release();
-            // If cast succeeded, the dynamic_cast returned the same pointer
-            // with the existing retain — don't release.
-        }
+        driverLogStream = CCLogStream::withPipeAndName(driverLogPipe, "DriverLogStream", &logStreamOptions);
     }
     XYLog("%s driverLogStreamRet %d\n", __FUNCTION__, driverLogStream != NULL);
 

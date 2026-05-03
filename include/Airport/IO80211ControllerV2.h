@@ -380,7 +380,14 @@ public:
     virtual IO80211FlowQueueLegacy* requestFlowQueue(FlowIdMetadata const*);                          // 423
     virtual void releaseFlowQueue(IO80211FlowQueue *);                                                // 424
     virtual bool getLogPipes(CCPipe**, CCPipe**, CCPipe**);                                           // 425
-    virtual void *_seq_pad_slot426() { return nullptr; }                                                                // slot 426 [PV padding]
+    // Sequoia 15.7.5: slot 426 was thought to be PV padding but is actually
+    // getControllerGlobalLogger() — IO80211ControllerMonitor::initWithControllerAndProvider
+    // stores its return at monitor->ivars[0x10][0xdb0] and null-checks. NULL
+    // → init fails → withControllerAndProvider returns NULL → createIOReporters
+    // returns kIOReturnNoResources → IO80211Controller::start fails to start.
+    // Subclasses must override and return a real CCLogStream* built via
+    // CCLogStream::withPipeAndName (not the abstract CCStream factory).
+    virtual void *getControllerGlobalLogger() { return nullptr; }                                                       // slot 426
     virtual void enableFeatureForLoggingFlags(unsigned long long);                                    // 427
     virtual IOReturn requestQueueSizeAndTimeout(unsigned short *, unsigned short *);                  // 428
     virtual IOReturn enablePacketTimestamping(void);                                                  // 429
