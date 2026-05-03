@@ -339,6 +339,17 @@ initCCLogs()
 #endif
 }
 
+// Sequoia 15.7.5 IOLog suppression workaround for non-Apple kexts.
+// setProperty on `this` only survives until our instance is destroyed (start
+// failure → IOKit releases instance → IORegistry node + properties gone).
+// Mirror to IOResources (long-lived registry entry) so trace_step survives
+// destruction and we can post-mortem via `ioreg -k airportitlwm_trace`.
+#define TRACE_STEP(s) do { \
+    setProperty("trace_step", s); \
+    IOService *_res = IOService::getResourceService(); \
+    if (_res) _res->setProperty("airportitlwm_trace", s); \
+} while (0)
+
 bool AirportItlwm::start(IOService *provider)
 {
     XYLog("%s\n", __PRETTY_FUNCTION__);
@@ -346,7 +357,7 @@ bool AirportItlwm::start(IOService *provider)
     int boot_value = 0;
 
     // Boot trace via setProperty (Sequoia 抑制 IOLog, 用 ioreg 抓行号)
-    setProperty("trace_step", "01_entered");
+    TRACE_STEP("01_entered");
 
     UInt8 builtIn = 0;
     setProperty("built-in", OSData::withBytes(&builtIn, sizeof(builtIn)));
@@ -359,65 +370,65 @@ bool AirportItlwm::start(IOService *provider)
     // "No ivars->_faultReporter" @IO80211Controller.cpp:3288 if it returns NULL.
     // Original itlwm calls initCCLogs at line 311 (after super::start) — too late.
     // Initialize CCLogs here so driverFaultReporter is valid when Apple asks.
-    setProperty("trace_step", "01b_pre_initCCLogs_early");
+    TRACE_STEP("01b_pre_initCCLogs_early");
     if (!initCCLogs()) {
-        setProperty("trace_step", "FAIL_initCCLogs_early");
+        TRACE_STEP("FAIL_initCCLogs_early");
         return false;
     }
-    setProperty("trace_step", "01c_post_initCCLogs_early");
+    TRACE_STEP("01c_post_initCCLogs_early");
 #endif
 
-    setProperty("trace_step", "02_pre_super_start");
+    TRACE_STEP("02_pre_super_start");
     if (!super::start(provider)) {
-        setProperty("trace_step", "FAIL_super_start");
+        TRACE_STEP("FAIL_super_start");
         return false;
     }
-    setProperty("trace_step", "03_post_super_start");
+    TRACE_STEP("03_post_super_start");
     pciNub->setBusMasterEnable(true);
     pciNub->setIOEnable(true);
     pciNub->setMemoryEnable(true);
     pciNub->configWrite8(0x41, 0);
-    setProperty("trace_step", "04_pre_requestPowerDomain");
+    TRACE_STEP("04_pre_requestPowerDomain");
     if (pciNub->requestPowerDomainState(kIOPMPowerOn,
                                         (IOPowerConnection *) getParentEntry(gIOPowerPlane), IOPMLowestState) != IOPMNoErr) {
-        setProperty("trace_step", "FAIL_requestPowerDomain");
+        TRACE_STEP("FAIL_requestPowerDomain");
         super::stop(provider);
         return false;
     }
-    setProperty("trace_step", "05_pre_initPCIPowerManagment");
+    TRACE_STEP("05_pre_initPCIPowerManagment");
     if (initPCIPowerManagment(pciNub) == false) {
-        setProperty("trace_step", "FAIL_initPCIPowerManagment");
+        TRACE_STEP("FAIL_initPCIPowerManagment");
         super::stop(pciNub);
         return false;
     }
-    setProperty("trace_step", "06_post_initPCIPowerManagment");
+    TRACE_STEP("06_post_initPCIPowerManagment");
     if (_fWorkloop == NULL) {
-        setProperty("trace_step", "FAIL_no_workloop");
+        TRACE_STEP("FAIL_no_workloop");
         XYLog("No _fWorkloop!!\n");
         super::stop(pciNub);
         releaseAll();
         return false;
     }
-    setProperty("trace_step", "07_pre_commandGate");
+    TRACE_STEP("07_pre_commandGate");
     _fCommandGate = IOCommandGate::commandGate(this, (IOCommandGate::Action)AirportItlwm::tsleepHandler);
     if (_fCommandGate == 0) {
-        setProperty("trace_step", "FAIL_no_commandGate");
+        TRACE_STEP("FAIL_no_commandGate");
         XYLog("No command gate!!\n");
         super::stop(pciNub);
         releaseAll();
         return false;
     }
     _fWorkloop->addEventSource(_fCommandGate);
-    setProperty("trace_step", "08_pre_createMediumTables");
+    TRACE_STEP("08_pre_createMediumTables");
     const IONetworkMedium *primaryMedium;
     if (!createMediumTables(&primaryMedium) ||
         !setCurrentMedium(primaryMedium) || !setSelectedMedium(primaryMedium)) {
-        setProperty("trace_step", "FAIL_createMediumTables");
+        TRACE_STEP("FAIL_createMediumTables");
         XYLog("setup medium fail\n");
         releaseAll();
         return false;
     }
-    setProperty("trace_step", "09_pre_initWithController");
+    TRACE_STEP("09_pre_initWithController");
     fHalService->initWithController(this, _fWorkloop, _fCommandGate);
     fHalService->get80211Controller()->ic_event_handler = eventHandler;
 
@@ -426,18 +437,18 @@ bool AirportItlwm::start(IOService *provider)
     if (PE_parse_boot_argn("-noht40", &boot_value, sizeof(boot_value)))
         fHalService->get80211Controller()->ic_userflags |= IEEE80211_F_NOHT40;
 
-    setProperty("trace_step", "10_pre_halAttach");
+    TRACE_STEP("10_pre_halAttach");
     if (!fHalService->attach(pciNub)) {
-        setProperty("trace_step", "FAIL_halAttach");
+        TRACE_STEP("FAIL_halAttach");
         XYLog("attach fail\n");
         super::stop(pciNub);
         releaseAll();
         return false;
     }
-    setProperty("trace_step", "11_post_halAttach");
+    TRACE_STEP("11_post_halAttach");
     fWatchdogWorkLoop = IOWorkLoop::workLoop();
     if (fWatchdogWorkLoop == NULL) {
-        setProperty("trace_step", "FAIL_watchdogWorkloop");
+        TRACE_STEP("FAIL_watchdogWorkloop");
         XYLog("init watchdog workloop fail\n");
         fHalService->detach(pciNub);
         super::stop(pciNub);
@@ -446,7 +457,7 @@ bool AirportItlwm::start(IOService *provider)
     }
     watchdogTimer = IOTimerEventSource::timerEventSource(this, OSMemberFunctionCast(IOTimerEventSource::Action, this, &AirportItlwm::watchdogAction));
     if (!watchdogTimer) {
-        setProperty("trace_step", "FAIL_watchdogTimer");
+        TRACE_STEP("FAIL_watchdogTimer");
         XYLog("init watchdog fail\n");
         fHalService->detach(pciNub);
         super::stop(pciNub);
@@ -458,7 +469,7 @@ bool AirportItlwm::start(IOService *provider)
     _fWorkloop->addEventSource(scanSource);
     scanSource->enable();
 
-    setProperty("trace_step", "12_pre_newSkywalkInterface");
+    TRACE_STEP("12_pre_newSkywalkInterface");
     fNetIf = new AirportItlwmSkywalkInterface;
 #if __IO80211_TARGET >= __MAC_15_0
     // Sequoia 15.7.5: split init() per new vtable — Apple's
@@ -467,7 +478,7 @@ bool AirportItlwm::start(IOService *provider)
     // afterwards so all subsequent ivars are wired before super::start.
     if (!((AirportItlwmSkywalkInterface *)fNetIf)->init() ||
         !((AirportItlwmSkywalkInterface *)fNetIf)->bindController(this)) {
-        setProperty("trace_step", "FAIL_skywalkInit");
+        TRACE_STEP("FAIL_skywalkInit");
         XYLog("Skywalk interface init fail\n");
         super::stop(provider);
         releaseAll();
@@ -475,14 +486,14 @@ bool AirportItlwm::start(IOService *provider)
     }
 #else
     if (!fNetIf->init(this)) {
-        setProperty("trace_step", "FAIL_skywalkInit");
+        TRACE_STEP("FAIL_skywalkInit");
         XYLog("Skywalk interface init fail\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
 #endif
-    setProperty("trace_step", "13_post_skywalkInit");
+    TRACE_STEP("13_post_skywalkInit");
     fNetIf->setInterfaceRole(1);
     fNetIf->setInterfaceId(1);
 
@@ -490,47 +501,47 @@ bool AirportItlwm::start(IOService *provider)
     // Sonoma 14.x: super::start doesn't need driverFaultReporter early —
     // initCCLogs runs here. Sequoia 15.x already ran initCCLogs before super::start.
     if (!initCCLogs()) {
-        setProperty("trace_step", "FAIL_initCCLogs");
+        TRACE_STEP("FAIL_initCCLogs");
         XYLog("CCLog init fail\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
 #endif
-    setProperty("trace_step", "14_post_initCCLogs");
+    TRACE_STEP("14_post_initCCLogs");
     if (!fNetIf->attach(this)) {
-        setProperty("trace_step", "FAIL_skywalkAttach");
+        TRACE_STEP("FAIL_skywalkAttach");
         XYLog("attach to service fail\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
-    setProperty("trace_step", "15_post_skywalkAttach");
+    TRACE_STEP("15_post_skywalkAttach");
     if (!attachInterface(fNetIf, this)) {
-        setProperty("trace_step", "FAIL_attachInterface");
+        TRACE_STEP("FAIL_attachInterface");
         XYLog("attach to interface fail\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
-    setProperty("trace_step", "16_post_attachInterface");
+    TRACE_STEP("16_post_attachInterface");
     if (!IONetworkController::attachInterface((IONetworkInterface **)&bsdInterface, true)) {
-        setProperty("trace_step", "FAIL_IONCAttachInterface");
+        TRACE_STEP("FAIL_IONCAttachInterface");
         XYLog("attach to IONetworkController interface fail\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
-    setProperty("trace_step", "17_post_IONCAttachInterface");
+    TRACE_STEP("17_post_IONCAttachInterface");
     memset(&registInfo, 0, sizeof(registInfo));
     if (!fNetIf->initRegistrationInfo(&registInfo, 1, sizeof(registInfo))) {
-        setProperty("trace_step", "FAIL_initRegistrationInfo");
+        TRACE_STEP("FAIL_initRegistrationInfo");
         XYLog("initRegistrationInfo fail\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
-    setProperty("trace_step", "18_post_initRegistrationInfo");
+    TRACE_STEP("18_post_initRegistrationInfo");
 #if __IO80211_TARGET < __MAC_15_0
     // Sonoma 14.x path: legacy upstream code manually populated the
     // mExpansionData/mExpansionData2 RegistrationInfo slots to work around an
@@ -541,9 +552,9 @@ bool AirportItlwm::start(IOService *provider)
     memcpy(fNetIf->mExpansionData2->fRegistrationInfo, &registInfo, sizeof(registInfo));
     if (fNetIf->getInterfaceRole() == 1)
         fNetIf->deferBSDAttach(true);
-    setProperty("trace_step", "19_pre_skywalkStart");
+    TRACE_STEP("19_pre_skywalkStart");
     fNetIf->start(this);
-    setProperty("trace_step", "20_post_skywalkStart");
+    TRACE_STEP("20_post_skywalkStart");
 #else
     // Sequoia 15.x: build the full Skywalk packet path (TX/RX pools + queues +
     // registerEthernetInterface) so IOSkywalkNetworkBSDClient can match and
@@ -568,14 +579,14 @@ bool AirportItlwm::start(IOService *provider)
         fTxPool = IOSkywalkPacketBufferPool::withName("AirportItlwm-TX", fNetIf, 0, &poolOpts);
         fRxPool = IOSkywalkPacketBufferPool::withName("AirportItlwm-RX", fNetIf, 0, &poolOpts);
         if (!fTxPool || !fRxPool) {
-            setProperty("trace_step", "FAIL_skywalkPool");
+            TRACE_STEP("FAIL_skywalkPool");
             XYLog("Skywalk pool create fail TX=%p RX=%p\n", fTxPool, fRxPool);
             super::stop(provider);
             releaseAll();
             return false;
         }
     }
-    setProperty("trace_step", "18b_post_pools");
+    TRACE_STEP("18b_post_pools");
 
     // Sequoia 15.7.5: IOSkywalkTxSubmissionQueue::withPool /
     // IOSkywalkRxCompletionQueue::withPool are not in Apple's kxld export
@@ -593,27 +604,27 @@ bool AirportItlwm::start(IOService *provider)
             IOSleep(100);
         }
         if (!resolveSequoiaShimSymbols()) {
-            setProperty("trace_step", "FAIL_shim_symbols_unresolved");
+            TRACE_STEP("FAIL_shim_symbols_unresolved");
             XYLog("AirportItlwmShim did not publish required Sequoia symbols\n");
             super::stop(provider);
             releaseAll();
             return false;
         }
     }
-    setProperty("trace_step", "18b1_post_resolveShim");
+    TRACE_STEP("18b1_post_resolveShim");
 
     fTxQueue = gShimTxWithPool(fTxPool, 256, 0, this,
                                skywalkTxAction, NULL, 0);
     fRxQueue = gShimRxWithPool(fRxPool, 256, 0, this,
                                skywalkRxAction, NULL, 0);
     if (!fTxQueue || !fRxQueue) {
-        setProperty("trace_step", "FAIL_skywalkQueue");
+        TRACE_STEP("FAIL_skywalkQueue");
         XYLog("Skywalk queue create fail TX=%p RX=%p\n", fTxQueue, fRxQueue);
         super::stop(provider);
         releaseAll();
         return false;
     }
-    setProperty("trace_step", "18c_post_queues");
+    TRACE_STEP("18c_post_queues");
 
     {
         IOSkywalkPacketQueue *queues[] = {
@@ -627,33 +638,33 @@ bool AirportItlwm::start(IOService *provider)
             (const IOSkywalkEthernetInterface::RegistrationInfo *)&registInfo,
             queues, 2, fTxPool, fRxPool, 0);
         if (regRet != kIOReturnSuccess) {
-            setProperty("trace_step", "FAIL_registerEthernetInterface");
+            TRACE_STEP("FAIL_registerEthernetInterface");
             XYLog("registerEthernetInterface fail ret=0x%x\n", regRet);
             super::stop(provider);
             releaseAll();
             return false;
         }
     }
-    setProperty("trace_step", "18d_post_registerEthernetInterface");
+    TRACE_STEP("18d_post_registerEthernetInterface");
 
-    setProperty("trace_step", "19_pre_skywalkStart");
+    TRACE_STEP("19_pre_skywalkStart");
     fNetIf->start(this);
-    setProperty("trace_step", "20_post_skywalkStart");
+    TRACE_STEP("20_post_skywalkStart");
 
     // Trigger BSD ifnet publication via IOSkywalkNetworkBSDClient matching.
     // deferBSDAttach(false) clears the IODeferBSDAttach property and
     // re-registers the service so BSDClient can create the nexus channel
     // and BSD ifnet.
     fNetIf->deferBSDAttach(false);
-    setProperty("trace_step", "20b_post_deferBSDAttach_false");
+    TRACE_STEP("20b_post_deferBSDAttach_false");
 #endif
 
     setLinkStatus(kIONetworkLinkValid);
     if (TAILQ_EMPTY(&fHalService->get80211Controller()->ic_ess))
         fHalService->get80211Controller()->ic_flags |= IEEE80211_F_AUTO_JOIN;
-    setProperty("trace_step", "21_pre_registerService");
+    TRACE_STEP("21_pre_registerService");
     registerService();
-    setProperty("trace_step", "22_DONE");
+    TRACE_STEP("22_DONE");
     return true;
 }
 
