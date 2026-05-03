@@ -128,19 +128,6 @@ void AirportItlwm::releaseAll()
     unregistPM();
 }
 
-#if __IO80211_TARGET >= __MAC_15_0
-// Sequoia 15.7.5 thunk for the inherited (and unexported) parent
-// IO80211Controller::postMessage(uint, void*, ulong, uint, void*).
-// Routes through gShimPostMessage when present; otherwise drops the message
-// (no fatal effect — postMessage is an out-of-band notification path).
-void AirportItlwm::postMessage(UInt msg, void *data, unsigned long dataLen,
-                               UInt arg4, void *arg5)
-{
-    if (gShimPostMessage)
-        gShimPostMessage(this, (uint32_t)msg, data, dataLen, (uint32_t)arg4, arg5);
-}
-#endif
-
 void AirportItlwm::
 eventHandler(struct ieee80211com *ic, int msgCode, void *data)
 {
@@ -736,18 +723,12 @@ IO80211WorkQueue *AirportItlwm::getWorkQueue()
 }
 #endif
 
+#if __IO80211_TARGET < __MAC_15_0
 void *AirportItlwm::getFaultReporterFromDriver()
 {
-#if __IO80211_TARGET >= __MAC_15_0
-    // Sequoia 15.7.5 actual binary RE: IO80211FaultReporter class doesn't
-    // exist. Apple stores our return verbatim in controller ivars+0x58 as
-    // CCFaultReporter*. PeerManager invokes vtable[0x120] = registerCallbacks
-    // on it directly.
-    return ccFaultReporter;
-#else
     return driverFaultReporter;
-#endif
 }
+#endif
 
 #if __IO80211_TARGET < __MAC_15_0
 IOReturn AirportItlwm::enable(IO80211SkywalkInterface *netif)
@@ -1244,18 +1225,6 @@ SInt32 AirportItlwm::apple80211SkywalkRequest(UInt request,int cmd,IO80211Skywal
         XYLog("%s 2 cmd: %s request: %d\n", __FUNCTION__, convertApple80211IOCTLToString(cmd), request);
     return kIOReturnUnsupported;
 }
-#else
-// Sequoia 15.7.5 stub-overrides — see comment in AirportItlwmV2.hpp.
-// Pure forwarders to super:: so behavior is unchanged; the only purpose is to
-// own the vtable slot ourselves and avoid OC's vtable-patcher cross-kext issue.
-SInt32 AirportItlwm::apple80211_ioctl_get(IO80211SkywalkInterface *itf, void *d, bool b1, bool b2)
-{ return super::apple80211_ioctl_get(itf, d, b1, b2); }
-SInt32 AirportItlwm::apple80211_ioctl_set(IO80211SkywalkInterface *itf, void *d, bool b1, bool b2)
-{ return super::apple80211_ioctl_set(itf, d, b1, b2); }
-SInt32 AirportItlwm::apple80211_ioctl_get(IO80211VirtualInterface *itf, void *d, bool b1, bool b2)
-{ return super::apple80211_ioctl_get(itf, d, b1, b2); }
-SInt32 AirportItlwm::apple80211_ioctl_set(IO80211VirtualInterface *itf, void *d, bool b1, bool b2)
-{ return super::apple80211_ioctl_set(itf, d, b1, b2); }
 #endif
 
 IOReturn AirportItlwm::enableAdapter(IONetworkInterface *netif)

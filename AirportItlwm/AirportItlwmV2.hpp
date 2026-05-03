@@ -146,32 +146,21 @@ public:
     }
     
     virtual bool getLogPipes(CCPipe**, CCPipe**, CCPipe**) override;
-    
-    virtual void *getFaultReporterFromDriver() override;
-
-// 15.7.5 ground truth: many vmethods that were thought to be non-PV in the
-// 14.x KDK are now PVs requiring driver implementation, while others
-// (debugStateInit, getPLATFORM_CONFIG, allocIO80211RecursiveLock,
-// getActionFramePoolCapacity, getPostOffice, CreatePostOffice) are
-// removed entirely from 15.7.5. We rely on Apple's parent IO80211Controller
-// implementations for everything except the IOCTL plumbing & log getter.
 
 #if __IO80211_TARGET < __MAC_15_0
+    virtual void *getFaultReporterFromDriver() override;
     virtual SInt32 apple80211_ioctl(IO80211SkywalkInterface *,unsigned long,void *, bool, bool) override;
     virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *) override;
     virtual SInt32 apple80211SkywalkRequest(UInt,int,IO80211SkywalkInterface *,void *,void *) override;
 #else
-    // Sequoia 15.7.5: stub-override the 4 apple80211_ioctl_get/set slots so our
-    // vtable points to our own thunks, not parent IO80211Controller methods.
-    // OC's prelinked vtable patcher cannot resolve cross-kext parent vtable
-    // entries when the parent kext (IO80211Family) uses chained-fixup pointers
-    // — leaving these slots as `extern parent_symbol` triggers
-    // "OCAK: Failed to patch symbol __ZN17IO80211Controller20apple80211_ioctl_*".
-    // The thunks just forward to super:: so behavior is unchanged.
-    virtual SInt32 apple80211_ioctl_get(IO80211SkywalkInterface *, void *, bool, bool) override;
-    virtual SInt32 apple80211_ioctl_set(IO80211SkywalkInterface *, void *, bool, bool) override;
-    virtual SInt32 apple80211_ioctl_get(IO80211VirtualInterface *, void *, bool, bool) override;
-    virtual SInt32 apple80211_ioctl_set(IO80211VirtualInterface *, void *, bool, bool) override;
+    // Sequoia 15.7.5: parent IO80211Controller has none of:
+    //   - apple80211_ioctl_get/set on Skywalk/Virtual interfaces
+    //   - apple80211_ioctl(IO80211SkywalkInterface*, ...)
+    //   - apple80211{Virtual,Skywalk}Request
+    //   - getFaultReporterFromDriver (now a PV at slot 434, used differently)
+    // These methods don't exist as virtual slots in Apple's 15.7.5 IO80211Controller
+    // vtable, so we don't override them in our derived class. The IO80211InfraInterface
+    // path handles the IOCTL routing in 15.7.5.
 #endif
 
     bool createMediumTables(const IONetworkMedium **primary);
@@ -200,17 +189,12 @@ public:
         return driverLogStream;
     };
 
-    // Sequoia 15.7.5: IO80211Controller::postMessage (vtable slot 471, mangled
-    // __ZN17IO80211Controller11postMessageEjPvmjS0_) was removed from Apple's
-    // kxld export table. Without an override, our vtable inherits a relocation
-    // pointing at the missing parent symbol — kxld export check fails and the
-    // kext refuses to load. Override here so our slot points at our own thunk
-    // that forwards through a function pointer resolved at runtime by
-    // AirportItlwmShim.kext (a Lilu plugin). Falls back to a silent no-op if
-    // the shim hasn't published the symbol — postMessage is informational only,
-    // missing it doesn't break the data path.
-    virtual void postMessage(UInt msg, void *data, unsigned long dataLen,
-                             UInt arg4, void *arg5) override;
+    // Sequoia 15.7.5: IO80211Controller::postMessage(uint, void*, ulong, uint, void*)
+    // does NOT exist in the Apple binary (no vtable slot, no symbol). Removing
+    // the override entirely. Real postMessage path in 15.7.5 uses the typed
+    // overload IO80211Controller::postMessage(IO80211SkywalkInterface*, uint,
+    // void*, ulong, bool) which is a non-virtual member function we don't need
+    // to override either — Apple's framework calls it directly.
 #else
     virtual SInt32 handleCardSpecific(IO80211SkywalkInterface *,unsigned long,void *,bool) override {
         XYLog("%s\n", __FUNCTION__);
@@ -245,10 +229,13 @@ public:
 //        XYLog("%s\n", __FUNCTION__);
         return setCOUNTRY_CODE((OSObject *)interface, data);
     }
+#if __IO80211_TARGET < __MAC_15_0
+    // Sequoia 15.7.5: setGET_DEBUG_INFO removed from IO80211Controller vtable.
     virtual IOReturn setGET_DEBUG_INFO(IO80211SkywalkInterface *interface,apple80211_debug_command *data) override {
         XYLog("%s\n", __FUNCTION__);
         return kIOReturnSuccess;
     }
+#endif
     
     //scan
     static void fakeScanDone(OSObject *owner, IOTimerEventSource *sender);
