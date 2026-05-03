@@ -327,7 +327,17 @@ initCCLogs()
             IOWorkLoop *frWorkloop = IOWorkLoop::workLoop();
             if (frWorkloop) {
                 ccFaultReporter = CCFaultReporter::withStreamWorkloop(fdStream, frWorkloop);
-                frWorkloop->release();  // CCFaultReporter retains workloop
+                // DO NOT release frWorkloop here. Sequoia 15.7.5 panic
+                // verified: PeerManager::initWithInterface calls our
+                // ccFaultReporter->registerCallbacks (vtable[byte 0x120]),
+                // which internally dispatches a workloop-bound kernel
+                // function. If we release frWorkloop, the workloop's
+                // ref count drops to 0 -> freed -> ccFaultReporter holds
+                // dangling pointer -> kernel func derefs `null+0x38`
+                // page fault (panic CR2=0x38).
+                // Earlier comment "CCFaultReporter retains workloop" was
+                // wrong assumption — withStreamWorkloop borrows but does
+                // not retain. Leaking one workloop is acceptable.
             }
         }
     }
