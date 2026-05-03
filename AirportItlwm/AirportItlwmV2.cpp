@@ -89,6 +89,7 @@ void AirportItlwm::releaseAll()
     OSSafeReleaseNULL(driverSnapshotsPipe);
     OSSafeReleaseNULL(driverFaultReporter);
 #if __IO80211_TARGET >= __MAC_15_0
+    OSSafeReleaseNULL(fIO80211FaultReporter);
     OSSafeReleaseNULL(ccFaultReporter);
     OSSafeReleaseNULL(driverLogStream);
     OSSafeReleaseNULL(fTxQueue);
@@ -331,6 +332,7 @@ initCCLogs()
     // CCFaultReporter*. PeerManager/ScanManager later call
     // CCFaultReporter::registerCallbacks via vtable[0x120] on it.
     // Just return the raw CCFaultReporter — no IO80211FaultReporter wrapper.
+    OSSafeReleaseNULL(fIO80211FaultReporter);
     OSSafeReleaseNULL(ccFaultReporter);
     if (driverFaultReporter) {
         CCDataStream *fdStream = OSDynamicCast(CCDataStream, driverFaultReporter);
@@ -338,22 +340,23 @@ initCCLogs()
             IOWorkLoop *frWorkloop = IOWorkLoop::workLoop();
             if (frWorkloop) {
                 ccFaultReporter = CCFaultReporter::withStreamWorkloop(fdStream, frWorkloop);
-                // DO NOT release frWorkloop here. Sequoia 15.7.5 panic
-                // verified: PeerManager::initWithInterface calls our
-                // ccFaultReporter->registerCallbacks (vtable[byte 0x120]),
-                // which internally dispatches a workloop-bound kernel
-                // function. If we release frWorkloop, the workloop's
-                // ref count drops to 0 -> freed -> ccFaultReporter holds
-                // dangling pointer -> kernel func derefs `null+0x38`
-                // page fault (panic CR2=0x38).
-                // Earlier comment "CCFaultReporter retains workloop" was
-                // wrong assumption — withStreamWorkloop borrows but does
-                // not retain. Leaking one workloop is acceptable.
+                // (workloop release intentionally dropped earlier — see
+                // commit 4a20c48 — turned out unrelated to the actual panic.)
             }
         }
     }
-    XYLog("%s ccFaultReporterRet %d\n", __FUNCTION__, ccFaultReporter != NULL);
-    return driverLogPipe && driverDataPathPipe && driverSnapshotsPipe && driverFaultReporter && ccFaultReporter && driverLogStream;
+    // Wrap raw CCFaultReporter into IO80211FaultReporter so PeerManager's
+    // dispatch on slot 36 (byte 0x120) lands on the correct trampoline →
+    // CCFaultReporter::registerCallbacks. Without this wrap, slot 36 of a
+    // raw CCFaultReporter is inherited IORegistryEntry::copyProperty →
+    // wrong dispatch → kernel page fault on null+0x38.
+    if (ccFaultReporter) {
+        fIO80211FaultReporter = IO80211FaultReporter::allocWithParams(ccFaultReporter);
+    }
+    XYLog("%s ccFaultReporterRet %d fIO80211FaultReporterRet %d\n", __FUNCTION__,
+          ccFaultReporter != NULL, fIO80211FaultReporter != NULL);
+    return driverLogPipe && driverDataPathPipe && driverSnapshotsPipe && driverFaultReporter
+           && ccFaultReporter && fIO80211FaultReporter && driverLogStream;
 #else
     return driverLogPipe && driverDataPathPipe && driverSnapshotsPipe && driverFaultReporter;
 #endif

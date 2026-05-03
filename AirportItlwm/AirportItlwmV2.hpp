@@ -28,6 +28,7 @@
 #include "Airport/CCDataStream.h"
 #include "Airport/CCFaultReporter.h"
 #include "Airport/CCLogStream.h"
+#include "Airport/IO80211FaultReporter.h"
 #if __IO80211_TARGET >= __MAC_15_0
 // IOSkywalkPacketBufferPool already pulled in via Airport/Apple80211.h above.
 // We use minimal local headers for the Tx/Rx queue classes to avoid the
@@ -201,10 +202,15 @@ public:
     virtual void *getDriverTextLog() override { return driverLogStream; }
     // Sequoia 15.7.5 slot 434: Apple's findAndAttachToFaultReporter calls this
     // and stores into ivars->_faultReporter; if NULL, panics
-    // "No ivars->_faultReporter" @IO80211Controller.cpp:3288. Return our
-    // ccFaultReporter (built via CCFaultReporter::withStreamWorkloop in
-    // initCCLogs).
-    virtual void *getFaultReporterFromDriver() override { return ccFaultReporter; }
+    // "No ivars->_faultReporter" @IO80211Controller.cpp:3288.
+    // Return the IO80211FaultReporter wrapper (NOT the raw CCFaultReporter):
+    // PeerManager::initWithInterface dispatches result->vtable[byte 0x120].
+    //   - On raw CCFaultReporter, slot 36 = inherited IORegistryEntry::copyProperty
+    //     → wrong dispatch → kernel page fault on null+0x38.
+    //   - On IO80211FaultReporter, slot 36 = trampoline →
+    //     CCFaultReporter::registerCallbacks (correct).
+    // Wrapping is done in initCCLogs() via IO80211FaultReporter::allocWithParams.
+    virtual void *getFaultReporterFromDriver() override { return fIO80211FaultReporter; }
 
     // Sequoia 15.7.5: IO80211Controller::postMessage(uint, void*, ulong, uint, void*)
     // does NOT exist in the Apple binary (no vtable slot, no symbol). Removing
@@ -330,10 +336,18 @@ public:
     
     CCStream *driverFaultReporter;
 #if __IO80211_TARGET >= __MAC_15_0
-    // Sequoia 15.7.5 RE: IO80211FaultReporter no longer exists. Apple's
-    // getFaultReporterFromDriver vtable slot expects raw CCFaultReporter*.
-    // Created via CCFaultReporter::withStreamWorkloop(CCDataStream, IOWorkLoop).
-    CCFaultReporter *ccFaultReporter;
+    // Sequoia 15.7.5 (REVISED 2026-05-04): IO80211FaultReporter EXISTS in
+    // 15.7.5 BootKC (md5 e4cc3972). Earlier RE that said it didn't was based
+    // on Sonoma 14.8.5 BootKC (md5 ea9a509a) mislabeled as Sequoia.
+    //
+    // We hold both:
+    //   ccFaultReporter — raw CCFaultReporter* from CCFaultReporter::withStreamWorkloop
+    //                     (the inner stream/workloop wrapper); kept retained
+    //   fIO80211FaultReporter — wraps ccFaultReporter; this is what Apple's
+    //                           PeerManager wants (its vtable[byte 0x120]
+    //                           trampolines to CCFaultReporter::registerCallbacks)
+    CCFaultReporter      *ccFaultReporter;
+    IO80211FaultReporter *fIO80211FaultReporter;
     // Sequoia 15.7.5 slot 436 getDriverTextLog must return a real CCLogStream*
     // obtained via CCStream::withPipeAndName + OSDynamicCast<CCLogStream>.
     CCLogStream *driverLogStream;
