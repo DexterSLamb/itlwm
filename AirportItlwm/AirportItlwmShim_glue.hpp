@@ -29,9 +29,11 @@ class IOSkywalkPacket;
 class IO80211Controller;
 
 // Sequoia 15.7.5 ground-truth: actions return UInt32 (not IOReturn).
+// Sequoia 15.7.5 ground-truth: pointer arg is `IOSkywalkPacket * const *`
+// (PKP) not `const IOSkywalkPacket **` (PPK). Verified via Apple BootKC nm.
 typedef unsigned int (*TxSubmissionAction)(OSObject *owner,
                                            IOSkywalkTxSubmissionQueue *queue,
-                                           const IOSkywalkPacket **packets,
+                                           IOSkywalkPacket * const *packets,
                                            uint32_t count, void *refcon);
 typedef unsigned int (*RxCompletionAction)(OSObject *owner,
                                            IOSkywalkRxCompletionQueue *queue,
