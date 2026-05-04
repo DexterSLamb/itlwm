@@ -851,6 +851,29 @@ bool AirportItlwm::configureInterface(IONetworkInterface *netif)
 
 IONetworkInterface *AirportItlwm::createInterface()
 {
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia 15.x: D3-light experiment.
+    // Apple's Sequoia design auto-wraps our IO80211SkywalkInterface
+    // (registered separately via fNetIf->registerService()) into a
+    // BSD-visible interface internally — Apple does this for
+    // AppleBCMWLANSkywalkInterface and AppleConvergedIPCSkywalkInterface.
+    //
+    // Our previous manual AirportItlwmEthernetInterface registration
+    // exposed the BSD performCommand chain that contains zombie code
+    // on Sequoia (panic at executeCommandAction via packet[+0x10] ==
+    // gMetaClass). Even with our performCommand override returning
+    // Unsupported, this whole layer is non-native.
+    //
+    // Returning nullptr here means we DON'T create our own
+    // AirportItlwmEthernetInterface. Skywalk-side fNetIf is still
+    // registered (in start() via registerEthernetInterface). If
+    // Apple's framework auto-wraps it into BSD, we get the native path
+    // for free. If it doesn't, IONetworkController::start may fail to
+    // proceed — that's the experiment data we want.
+    //
+    // Reference: docs/009-sequoia-fix-plan.md D3-light step.
+    return nullptr;
+#else
     AirportItlwmEthernetInterface *netif = new AirportItlwmEthernetInterface;
     if (!netif)
         return NULL;
@@ -859,6 +882,7 @@ IONetworkInterface *AirportItlwm::createInterface()
         return NULL;
     }
     return netif;
+#endif
 }
 
 bool AirportItlwm::createMediumTables(const IONetworkMedium **primary)
