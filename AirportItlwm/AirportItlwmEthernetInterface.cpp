@@ -7,6 +7,11 @@
 //
 
 #include "AirportItlwmEthernetInterface.hpp"
+#if __IO80211_TARGET >= __MAC_15_0
+// AirportItlwm declares getWorkQueue() returning IO80211WorkQueue* used by
+// the Sequoia path's runAction dispatch.
+#include "AirportItlwmV2.hpp"
+#endif
 
 #include <sys/_if_ether.h>
 #include <net80211/ieee80211_var.h>
