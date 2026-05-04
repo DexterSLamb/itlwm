@@ -484,8 +484,13 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
     // IO80211Controller — 我们 attach 到 AirportItlwm (IO80211Controller 子类).
     // commonStart 第三 check: controller->getWorkQueue() 非空 — _fWorkloop
     // 在 start() 末尾 = IO80211WorkQueue::workQueue() 非空.
-    IOService *stub = (IOService *)OSTypeAlloc(IO80211SkywalkInterface);
-    XYLog("Path B: OSTypeAlloc(IO80211SkywalkInterface) → %p\n", stub);
+    // Plan A v4: 用 AirportItlwmSkywalkInterface (我们自己的子类) 实例化, 而非
+    // OSTypeAlloc Apple 的 IO80211SkywalkInterface (后者 abstract / 没 default
+    // ctor, OSTypeAlloc 返 NULL silent fail). AirportItlwmSkywalkInterface 链:
+    // : IO80211InfraProtocol : IO80211InfraInterface : IO80211SkywalkInterface
+    // IS-A 关系满足 commonStart 的 OSDynamicCast.
+    AirportItlwmSkywalkInterface *stub = new AirportItlwmSkywalkInterface;
+    XYLog("Path B: new AirportItlwmSkywalkInterface → %p\n", stub);
     if (stub) {
         bool initOK = stub->init();
         bool attachOK = initOK && stub->attach(self);
