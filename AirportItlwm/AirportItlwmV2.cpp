@@ -851,29 +851,17 @@ bool AirportItlwm::configureInterface(IONetworkInterface *netif)
 
 IONetworkInterface *AirportItlwm::createInterface()
 {
-#if __IO80211_TARGET >= __MAC_15_0
-    // Sequoia 15.x: D3-light experiment.
-    // Apple's Sequoia design auto-wraps our IO80211SkywalkInterface
-    // (registered separately via fNetIf->registerService()) into a
-    // BSD-visible interface internally — Apple does this for
-    // AppleBCMWLANSkywalkInterface and AppleConvergedIPCSkywalkInterface.
+    // D3-light (af3967f) tried returning nullptr for Sequoia path —
+    // Apple framework does NOT auto-wrap Skywalk to BSD. Result:
+    // IONetworkController::start failed because createInterface gave
+    // NULL → AirportItlwm IOService instance never started → driver
+    // class loaded but no kext active behavior.
     //
-    // Our previous manual AirportItlwmEthernetInterface registration
-    // exposed the BSD performCommand chain that contains zombie code
-    // on Sequoia (panic at executeCommandAction via packet[+0x10] ==
-    // gMetaClass). Even with our performCommand override returning
-    // Unsupported, this whole layer is non-native.
-    //
-    // Returning nullptr here means we DON'T create our own
-    // AirportItlwmEthernetInterface. Skywalk-side fNetIf is still
-    // registered (in start() via registerEthernetInterface). If
-    // Apple's framework auto-wraps it into BSD, we get the native path
-    // for free. If it doesn't, IONetworkController::start may fail to
-    // proceed — that's the experiment data we want.
-    //
-    // Reference: docs/009-sequoia-fix-plan.md D3-light step.
-    return nullptr;
-#else
+    // Revert to creating AirportItlwmEthernetInterface for both paths.
+    // Sequoia bypass of the broken executeCommand chain happens in
+    // AirportItlwmEthernetInterface::performCommand which selectively
+    // dispatches apple80211 ioctls (SIOCSA80211/SIOCGA80211) to
+    // apple80211Request and returns Unsupported for everything else.
     AirportItlwmEthernetInterface *netif = new AirportItlwmEthernetInterface;
     if (!netif)
         return NULL;
@@ -882,7 +870,6 @@ IONetworkInterface *AirportItlwm::createInterface()
         return NULL;
     }
     return netif;
-#endif
 }
 
 bool AirportItlwm::createMediumTables(const IONetworkMedium **primary)
