@@ -7,6 +7,7 @@
 //
 
 #include "AirportItlwmV2.hpp"
+#include <IOKit/IOUserClient.h>
 #include <sys/_netstat.h>
 #include <crypto/sha1.h>
 #include <net80211/ieee80211_priv.h>
