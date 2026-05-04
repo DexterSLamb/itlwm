@@ -279,7 +279,7 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
     init.name        = "en";
     init.unit        = 99;
     init.family      = IFNET_FAMILY_ETHERNET_2; // 2
-    init.type        = IFT_ETHER;               // 6 — airportd main path 期望
+    init.type        = 6;                       // IFT_ETHER literal (fork's OpenBSD if_types.h 覆盖了 macOS 版) — airportd main path 期望
     init.subfamily   = IFNET_SUBFAMILY_WIFI;    // 3 — 让 ifnet_subfamily() 返 WIFI
     init.output      = bsd_wlan_output;
     init.demux       = ether_demux;
