@@ -287,15 +287,20 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
             }
         }
 
-        IOReturn r = kIOReturnUnsupported;
+        IOReturn r = kIOReturnSuccess;
+        // Permissive Phase 2 dispatch — 让 airportd 至少把 en99 当 "正常但未关联"
+        // 的 wifi 接口接受. 大多数 GET 用 zero-buffer (kbuf 已 bzero), version=1.
+        // SET 全 no-op success. 实际 scan/associate 等到 Phase 3 再 wire.
+        if (is_get && klen >= 4) {
+            // 几乎所有 apple80211 data struct 第一个字段是 u_int32_t version
+            uint32_t version = 1; // APPLE80211_VERSION
+            memcpy(kbuf, &version, 4);
+        }
         switch (req->req_type) {
         case 12: // APPLE80211_IOC_CARD_CAPABILITIES
             if (is_get && klen >= 18) {
                 // struct apple80211_capability_data { u_int32_t version; u_int8_t cap[14]; }
-                uint32_t version = 1; // APPLE80211_VERSION
-                memcpy(kbuf, &version, 4);
                 uint8_t *cap = (uint8_t *)kbuf + 4;
-                // 镜像 AirportSTAIOCTL.cpp::getCARD_CAPABILITIES 用 ic_caps & RSN
                 cap[0] = (1 << 1) | (1 << 3);                       // TKIP + AES_CCM
                 cap[1] = (1 << (9-8)) | (1 << (10-8))               // SHSLOT + SHPREAMBLE
                        | (1 << (12-8)) | (1 << (13-8)) | (1 << (14-8)); // TKIPMIC + WPA1 + WPA2
@@ -304,11 +309,16 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
                 cap[4] = 0xAD;
                 cap[5] = 0x80 | 0x0C;
                 cap[6] = 0x8 | 0x4 | 0x80;
-                r = kIOReturnSuccess;
             }
             break;
+        case 13: // APPLE80211_IOC_STATE — 0 = INIT (idle, not connected)
+            // kbuf 已 bzero version=1, state field at offset 4 = 0 (INIT)
+            break;
+        case 1:   // APPLE80211_IOC_SSID — return zero ssid (not connected)
+        case 9:   // APPLE80211_IOC_BSSID — return zero bssid
+        case 103: // APPLE80211_IOC_CURRENT_NETWORK — return empty network
         default:
-            r = kIOReturnUnsupported;
+            // 其他都返 zero buffer success — airportd 把它解读为 "无数据/未关联"
             break;
         }
 
