@@ -314,6 +314,14 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
         case 13: // APPLE80211_IOC_STATE — 0 = INIT (idle, not connected)
             // kbuf 已 bzero version=1, state field at offset 4 = 0 (INIT)
             break;
+        case 19: // APPLE80211_IOC_POWER
+            // struct apple80211_power_data { u32 version; u32 num_radios; u32 power_state[4]; } = 24 bytes
+            // 报 power=ON 让 airportd 解锁 scan/associate 路径. SET 也 no-op success.
+            if (is_get && klen >= 24) {
+                ((uint32_t *)kbuf)[1] = 1;  // num_radios = 1
+                ((uint32_t *)kbuf)[2] = 1;  // power_state[0] = ON
+            }
+            break;
         case 1:   // APPLE80211_IOC_SSID — return zero ssid (not connected)
         case 9:   // APPLE80211_IOC_BSSID — return zero bssid
         case 103: // APPLE80211_IOC_CURRENT_NETWORK — return empty network
