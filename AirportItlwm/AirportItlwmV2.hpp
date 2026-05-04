@@ -129,6 +129,28 @@ public:
     // Sequoia 15.7.5: getWorkQueue is now CONST. Source RE evidence:
     // 15.7.5-IO80211Controller-vtable.txt slot 398 = __ZNK17IO80211Controller12getWorkQueueEv
     virtual IO80211WorkQueue *getWorkQueue() const override;
+
+    // Sequoia 15.7.5 vtable slot 268 (ZTV byte 0x860, vptr byte 0x850).
+    // Apple's IOEthernetInterface::performCommand dispatches via
+    //   call [ctrl_vtable + 0x850]
+    // expecting IONetworkController::executeCommand. Our on-disk vtable has
+    // slot 268 = NULL (kxld is supposed to fill from parent). On Sequoia
+    // configd's BSD ifnet_ioctl path triggered NX fault — RIP =
+    // IO80211InfraProtocol::gMetaClass (a DATA address near the vtable),
+    // strongly suggesting kxld misfilled this slot when resolving the
+    // vtable inheritance chain through our 432→657 slot extension.
+    // Override executeCommand explicitly so OUR on-disk vtable slot 268 is a
+    // real function (AirportItlwm::executeCommand) — bypass kxld's broken
+    // resolution. The body forwards to super (which IS the same Apple
+    // executeCommand we're trying to reach).
+    // KDK source: research/sequoia-port/kdk-extract/.../IO80211Family.kext
+    // BootKC source: research/sequoia-port/sequoia15.7.5/BootKernelExtensions.kc
+    // Decompile: docs/static-analysis/decompile-keyfuncs.txt
+    virtual IOReturn executeCommand(OSObject *client,
+                                    IONetworkController::Action action,
+                                    void *target,
+                                    void *param0 = 0, void *param1 = 0,
+                                    void *param2 = 0, void *param3 = 0) override;
 #else
     virtual IO80211WorkQueue *getWorkQueue() override;
 #endif

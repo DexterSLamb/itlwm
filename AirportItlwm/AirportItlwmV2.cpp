@@ -783,6 +783,27 @@ void *AirportItlwm::getFaultReporterFromDriver()
 }
 #endif
 
+#if __IO80211_TARGET >= __MAC_15_0
+// Force our AirportItlwm vtable slot 268 (executeCommand) to be a real
+// function pointer to OUR symbol. kxld is supposed to fill this slot from
+// IONetworkController parent at load time, but Sequoia evidence (panic NX
+// fault @ IO80211InfraProtocol::gMetaClass when configd's BSD ioctl chain
+// dispatched ctrl->vtable[0x850]) shows the resolution went wrong for
+// us — the slot ended up pointing at OSMetaClass data instead of code.
+// By providing our own override, slot 268 is owned by us in the on-disk
+// vtable and kxld doesn't need to fill it. Body just forwards to super.
+// Documented in docs/static-analysis/decompile-keyfuncs.txt.
+IOReturn AirportItlwm::executeCommand(OSObject *client,
+                                      IONetworkController::Action action,
+                                      void *target,
+                                      void *param0, void *param1,
+                                      void *param2, void *param3)
+{
+    return super::executeCommand(client, action, target,
+                                 param0, param1, param2, param3);
+}
+#endif
+
 #if __IO80211_TARGET < __MAC_15_0
 IOReturn AirportItlwm::enable(IO80211SkywalkInterface *netif)
 {
