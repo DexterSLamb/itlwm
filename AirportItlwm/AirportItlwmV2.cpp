@@ -491,27 +491,9 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
     // 回滚 v1: stub = bare IOService. commonStart 第一 cast 必 fail, 但至少
     // 恢复 en99 + airportd 把 en99 当 wifi 接口用 (通过 BSD ioctl GET 路径).
     // commonStart 完整 IS-A IO80211SkywalkInterface 路径需要更深 RE / 不同方案.
-    IOService *stub = OSTypeAlloc(IOService);
-    XYLog("Path B: OSTypeAlloc(IOService) → %p\n", stub);
-    if (stub) {
-        bool initOK = stub->init();
-        bool attachOK = initOK && stub->attach(self);
-        XYLog("Path B: stub init=%d attach=%d\n", initOK, attachOK);
-        if (initOK && attachOK) {
-            char ifname[16];
-            snprintf(ifname, sizeof(ifname), "%s%d",
-                     ifnet_name(gBsdWlanIfnet), ifnet_unit(gBsdWlanIfnet));
-            stub->setProperty("IOInterfaceName", ifname);
-            stub->setProperty("IO80211InterfaceRole", "Infrastructure");
-            stub->setProperty("IOUserClientClass", "IO80211APIUserClient");
-            stub->registerService();
-            XYLog("Path B: stub IOService for %s registered (Role=Infrastructure)\n", ifname);
-        } else {
-            stub->release();
-            XYLog("Path B: stub IOService init/attach failed\n");
-        }
-    }
-
+    // Plan A 重启: properties 现在 publish 在 fNetIf (start() 里), 这里不再
+    // 创 stub IOService — 双 service 同名 IOInterfaceName 会让 FindService 二选一
+    // 不可控. fNetIf 是真 IO80211SkywalkInterface 子类满足 commonStart, stub 不是.
     return true;
 }
 #endif
@@ -1008,18 +990,17 @@ bool AirportItlwm::start(IOService *provider)
     }
 #endif
     TRACE_STEP("14_post_initCCLogs");
-#if __IO80211_TARGET >= __MAC_15_0
-    // H4 实验: 不让 fNetIf attach 到 IOService 树, framework 找不到我们 SkywalkInterface
-    // → configd apple80211 ioctl 拿不到接口 → 不调 static getCARD_CAPABILITIES → 不 panic.
+    // Plan A 重启 (回到 native IO80211Family path): re-enable fNetIf->attach.
+    // H4 之前因 framework 找到我们后 dispatch panic 而 skip — 那时 RE 不够深.
+    // 现在我们知道:
+    //   - airportd 走 IOServiceOpen → IO80211APIUserClient → commonStart 三 check
+    //   - commonStart 要 provider IS-A IO80211SkywalkInterface (fNetIf 满足)
+    //   - GetProvider 必须 IO80211Controller (fNetIf->attach(this) 后满足)
+    //   - getWorkQueue() 非空 (slot 0xc78 实测就是 _fWorkloop)
+    // 上面三 check 都用我们已有数据, 不需要 H4 panic 暴露.
     //
-    // H1 (skip setInterfaceRole) + H2 (driver getCARD_CAPABILITIES 返 Unsupported)
-    // 都不消除 panic, 说明 corrupt 在 framework dispatch chain 早期, 不是 driver 写入.
-    // 跳过整个 fNetIf 暴露能验证: panic 是否依赖于 framework 找到我们.
-    //
-    // 副作用: 完全没 WiFi (本来也没). driver 只剩 controller 注册, 接口完全 invisible.
-    // 这是 panic source 隔离实验, 不是 fix.
-    TRACE_STEP("14b_skip_fNetIf_attach_H4");
-#else
+    // 如果 re-enable attach 复发 panic, 用 KDK 15.7.4 反编译 IO80211Family
+    // dispatch path 定位具体哪个 vtable slot 错位 (我们有 vtable dump).
     if (!fNetIf->attach(this)) {
         TRACE_STEP("FAIL_skywalkAttach");
         XYLog("attach to service fail\n");
@@ -1027,6 +1008,16 @@ bool AirportItlwm::start(IOService *provider)
         releaseAll();
         return false;
     }
+    TRACE_STEP("14b_post_fNetIf_attach_PlanA");
+#if __IO80211_TARGET >= __MAC_15_0
+    // Plan A: publish 让 airportd Apple80211FindService("en99") 命中 fNetIf,
+    // 然后 IOServiceOpen → Apple 的 IO80211APIUserClient → commonStart 三 check
+    // 全过 (provider IS-A SkywalkInterface, GetProvider IS-A IO80211Controller,
+    // controller->getWorkQueue() 非空 _fWorkloop).
+    fNetIf->setProperty("IOInterfaceName", "en99");
+    fNetIf->setProperty("IO80211InterfaceRole", "Infrastructure");
+    fNetIf->setProperty("IOUserClientClass", "IO80211APIUserClient");
+    XYLog("Plan A: fNetIf published en99/Infrastructure/IO80211APIUserClient\n");
 #endif
     TRACE_STEP("15_post_skywalkAttach");
     if (!attachInterface(fNetIf, this)) {
