@@ -119,7 +119,11 @@ struct macos_ifnet_init_eparams {
 extern "C" {
 errno_t ifnet_allocate_extended(const struct macos_ifnet_init_eparams *init,
                                  ifnet_t *interface);
-// kernel public KPI for crossing user/kernel address boundary
+// kernel public KPI for crossing user/kernel address boundary.
+// SDK header 用 __builtin_object_size 做 fortify-source wrapper, 但我们
+// 这里要直接拿 raw symbol — undef 掉 macro, 让 extern decl 链 kernel _copyin.
+#undef copyin
+#undef copyout
 int copyin(uint64_t uaddr, void *kaddr, size_t len);
 int copyout(const void *kaddr, uint64_t uaddr, size_t len);
 }
@@ -254,23 +258,21 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
         XYLog("PathB private 0xC020699F: written functional_type=0x80\n");
         return 0;
     }
-    // Phase 2: dispatch apple80211 ioctl 给现有 AirportSTAIOCTL.cpp 的
-    // apple80211Request handler. struct apple80211req 在 ioctl arg buf 里,
-    // req_data 是 user pointer 需要 copyin/copyout (kernel _copyin/_copyout
-    // 是 public symbol nm 验证).
+    // Phase 2: 自实 inline apple80211 ioctl handler — V2 class 没 apple80211Request
+    // member (AirportSTAIOCTL.cpp 不在 Sequoia15 target). 先 implement CARD_CAPABILITIES
+    // 让 BindToInterfaceWithIOCTL 过, 后续 req_type 按 airportd log 迭代加.
     if (cmd == (unsigned long)SIOCSA80211 || cmd == (unsigned long)SIOCGA80211) {
-        AirportItlwm *self = (AirportItlwm *)ifnet_softc(ifp);
-        if (!self) return EINVAL;
         struct apple80211req *req = (struct apple80211req *)arg;
         if (req->req_len > 65536) return EINVAL;
+        bool is_get = (cmd == (unsigned long)SIOCGA80211);
 
-        void *kbuf = NULL;
         size_t klen = req->req_len;
+        void *kbuf = NULL;
         if (klen > 0) {
             kbuf = IOMalloc(klen);
             if (!kbuf) return ENOMEM;
             bzero(kbuf, klen);
-            if (cmd == (unsigned long)SIOCSA80211 && req->req_data) {
+            if (!is_get && req->req_data) {
                 if (copyin((uint64_t)(uintptr_t)req->req_data, kbuf, klen) != 0) {
                     IOFree(kbuf, klen);
                     return EFAULT;
@@ -278,24 +280,42 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
             }
         }
 
-        SInt32 r = self->apple80211Request(
-            cmd == (unsigned long)SIOCSA80211 ? SIOCSA80211 : SIOCGA80211,
-            req->req_type,
-            NULL,
-            kbuf);
+        IOReturn r = kIOReturnUnsupported;
+        switch (req->req_type) {
+        case 12: // APPLE80211_IOC_CARD_CAPABILITIES
+            if (is_get && klen >= 18) {
+                // struct apple80211_capability_data { u_int32_t version; u_int8_t cap[14]; }
+                uint32_t version = 1; // APPLE80211_VERSION
+                memcpy(kbuf, &version, 4);
+                uint8_t *cap = (uint8_t *)kbuf + 4;
+                // 镜像 AirportSTAIOCTL.cpp::getCARD_CAPABILITIES 用 ic_caps & RSN
+                cap[0] = (1 << 1) | (1 << 3);                       // TKIP + AES_CCM
+                cap[1] = (1 << (9-8)) | (1 << (10-8))               // SHSLOT + SHPREAMBLE
+                       | (1 << (12-8)) | (1 << (13-8)) | (1 << (14-8)); // TKIPMIC + WPA1 + WPA2
+                cap[2] = 0xFF;
+                cap[3] = 0x2B;
+                cap[4] = 0xAD;
+                cap[5] = 0x80 | 0x0C;
+                cap[6] = 0x8 | 0x4 | 0x80;
+                r = kIOReturnSuccess;
+            }
+            break;
+        default:
+            r = kIOReturnUnsupported;
+            break;
+        }
 
         int rc = 0;
         if (r != kIOReturnSuccess) {
             rc = EOPNOTSUPP;
-        } else if (cmd == (unsigned long)SIOCGA80211 && klen > 0 && req->req_data) {
+        } else if (is_get && klen > 0 && req->req_data) {
             if (copyout(kbuf, (uint64_t)(uintptr_t)req->req_data, klen) != 0) {
                 rc = EFAULT;
             }
         }
 
-        XYLog("PathB SIOC%cA80211 type=%d len=%u → IOReturn 0x%x errno=%d\n",
-              cmd == (unsigned long)SIOCSA80211 ? 'S' : 'G',
-              req->req_type, req->req_len, r, rc);
+        XYLog("PathB SIOC%cA80211 type=%d len=%u → 0x%x errno=%d\n",
+              is_get ? 'G' : 'S', req->req_type, req->req_len, r, rc);
 
         if (kbuf) IOFree(kbuf, klen);
         return rc;
