@@ -484,13 +484,15 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
     // IO80211Controller — 我们 attach 到 AirportItlwm (IO80211Controller 子类).
     // commonStart 第三 check: controller->getWorkQueue() 非空 — _fWorkloop
     // 在 start() 末尾 = IO80211WorkQueue::workQueue() 非空.
-    // Plan A v4: 用 AirportItlwmSkywalkInterface (我们自己的子类) 实例化, 而非
-    // OSTypeAlloc Apple 的 IO80211SkywalkInterface (后者 abstract / 没 default
-    // ctor, OSTypeAlloc 返 NULL silent fail). AirportItlwmSkywalkInterface 链:
-    // : IO80211InfraProtocol : IO80211InfraInterface : IO80211SkywalkInterface
-    // IS-A 关系满足 commonStart 的 OSDynamicCast.
-    AirportItlwmSkywalkInterface *stub = new AirportItlwmSkywalkInterface;
-    XYLog("Path B: new AirportItlwmSkywalkInterface → %p\n", stub);
+    // Plan A v4 实测 fail: new AirportItlwmSkywalkInterface 第二实例让 start()
+    // 整个失败 (en99 没创建, ioreg 没 AirportItlwm). 子类 init 路径有副作用
+    // (可能与 fNetIf 共享状态 / IO80211 framework 不允许两个 SkywalkInterface).
+    //
+    // 回滚 v1: stub = bare IOService. commonStart 第一 cast 必 fail, 但至少
+    // 恢复 en99 + airportd 把 en99 当 wifi 接口用 (通过 BSD ioctl GET 路径).
+    // commonStart 完整 IS-A IO80211SkywalkInterface 路径需要更深 RE / 不同方案.
+    IOService *stub = OSTypeAlloc(IOService);
+    XYLog("Path B: OSTypeAlloc(IOService) → %p\n", stub);
     if (stub) {
         bool initOK = stub->init();
         bool attachOK = initOK && stub->attach(self);
