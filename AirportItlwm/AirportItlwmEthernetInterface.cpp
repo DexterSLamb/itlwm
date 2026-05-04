@@ -42,12 +42,59 @@ attachToDataLinkLayer( IOOptionBits options, void *parameter )
             setProperty(kIOMACAddress,  (void *) &addr,
                         kIOEthernetAddressSize);
         interface->registerService();
+#if __IO80211_TARGET >= __MAC_15_0
+        // Sequoia 15.x: IO80211InfraInterface::updateStaticProperties (called from
+        // prepareBSDInterface) hard-asserts thread context via IO80211Glue::sendIOUCToWcl
+        // @0x1b3ff: must run on the WCL workqueue thread or panic("trying to send on
+        // thread panic" @IO80211Glue.cpp:417). Apple's framework never invokes
+        // prepareBSDInterface on its own (only subclass super:: delegation chains;
+        // verified by grep of all vtable byte 0x8e8 dispatchers in IO80211Family —
+        // zero matches). So we MUST call it ourselves, but we MUST dispatch onto
+        // the workqueue thread. AirportItlwm exposes _fWorkloop (IO80211WorkQueue,
+        // extends IOWorkLoop); its runAction synchronously executes the action on
+        // the workloop thread, satisfying Glue's inGate() check.
+        // KDK source: research/sequoia-port/kdk-extract/.../IO80211Family.kext
+        AirportItlwm *ctrl = OSDynamicCast(AirportItlwm, getController());
+        // IO80211WorkQueue extends IOWorkLoop. AirportItlwm::getWorkQueue()
+        // returns the WCL workqueue (_fWorkloop), NOT IOService::getWorkLoop()
+        // which would be the family workloop. Use the WCL one because that's
+        // what Apple's Glue::sendIOUCToWcl asserts as required thread.
+        IO80211WorkQueue *wl = ctrl ? ctrl->getWorkQueue() : NULL;
+        if (wl) {
+            wl->runAction(&AirportItlwmEthernetInterface::prepareBSDInterfaceGated,
+                          this, interface, getIfnet());
+        } else {
+            // Fallback: best-effort direct call (will likely panic but better than
+            // silently skipping interface init)
+            interface->prepareBSDInterface(getIfnet(), 0);
+        }
+#else
+        // Sonoma 14.x: no workqueue thread assertion in IO80211Glue (Glue is a
+        // Sequoia-only class). Direct call is fine and matches original behavior.
         interface->prepareBSDInterface(getIfnet(), 0);
+#endif
 //        ret = bpf_attach(getIfnet(), DLT_RAW, 0x48, &AirportItlwmEthernetInterface::bpfOutputPacket, &AirportItlwmEthernetInterface::bpfTap);
     }
     isAttach = true;
     return ret;
 }
+
+#if __IO80211_TARGET >= __MAC_15_0
+// Static dispatcher invoked on the IO80211WorkQueue thread by runAction.
+// Calling interface->prepareBSDInterface here satisfies Apple's
+// IO80211Glue::sendIOUCToWcl thread-context assertion (Apple's gate check
+// at slot vtable[0x130]/[0x138] of IO80211WorkQueue).
+IOReturn AirportItlwmEthernetInterface::
+prepareBSDInterfaceGated(OSObject *target, void *interfaceArg,
+                         void *ifnetArg, void *, void *)
+{
+    auto *interface = (IO80211SkywalkInterface *)interfaceArg;
+    if (interface) {
+        interface->prepareBSDInterface((__ifnet *)ifnetArg, 0);
+    }
+    return kIOReturnSuccess;
+}
+#endif
 
 void AirportItlwmEthernetInterface::
 detachFromDataLinkLayer(IOOptionBits options, void *parameter)

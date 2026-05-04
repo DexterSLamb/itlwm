@@ -45,7 +45,14 @@ public:
                                  void *          param   = 0 ) override;
     
     virtual IOService * getProvider( void ) const override;
-    
+
+#if __IO80211_TARGET >= __MAC_15_0
+    // Static dispatcher to invoke prepareBSDInterface on the IO80211WorkQueue
+    // thread (Sequoia requires this; Sonoma path doesn't need it).
+    static IOReturn prepareBSDInterfaceGated(OSObject *target, void *interfaceArg,
+                                             void *ifnetArg, void *, void *);
+#endif
+
 private:
     IO80211SkywalkInterface *interface;
     bool isAttach;
