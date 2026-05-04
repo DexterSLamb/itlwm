@@ -201,7 +201,10 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
 
     ifnet_set_lladdr(gBsdWlanIfnet, mac, 6);
     ifnet_set_mtu(gBsdWlanIfnet, 1500);
+    // 设 IFF_UP | IFF_RUNNING — airportd._getIfListCopy 可能 require interface
+    // up/running 才 enumerate. flags 8802 (没 UP) 时 airportd reject.
     ifnet_set_flags(gBsdWlanIfnet,
+                    IFF_UP | IFF_RUNNING |
                     IFF_BROADCAST | IFF_MULTICAST | IFF_SIMPLEX,
                     0xffff);
 
