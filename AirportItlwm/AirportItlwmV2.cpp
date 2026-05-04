@@ -485,8 +485,12 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
     // commonStart 第三 check: controller->getWorkQueue() 非空 — _fWorkloop
     // 在 start() 末尾 = IO80211WorkQueue::workQueue() 非空.
     IOService *stub = (IOService *)OSTypeAlloc(IO80211SkywalkInterface);
+    XYLog("Path B: OSTypeAlloc(IO80211SkywalkInterface) → %p\n", stub);
     if (stub) {
-        if (stub->init() && stub->attach(self)) {
+        bool initOK = stub->init();
+        bool attachOK = initOK && stub->attach(self);
+        XYLog("Path B: stub init=%d attach=%d\n", initOK, attachOK);
+        if (initOK && attachOK) {
             char ifname[16];
             snprintf(ifname, sizeof(ifname), "%s%d",
                      ifnet_name(gBsdWlanIfnet), ifnet_unit(gBsdWlanIfnet));
