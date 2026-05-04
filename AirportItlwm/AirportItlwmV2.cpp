@@ -484,9 +484,12 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
                      ifnet_name(gBsdWlanIfnet), ifnet_unit(gBsdWlanIfnet));
             stub->setProperty("IOInterfaceName", ifname);
             stub->setProperty("IO80211InterfaceRole", "Infrastructure");
-            // Plan A: 让 IOServiceOpen 走我们的 UserClient. kxld 会按 class
-            // name 找到 BsdWlanUserClient 的 OSMetaClass 实例化.
-            stub->setProperty("IOUserClientClass", "BsdWlanUserClient");
+            // Plan A v2: airportd sandbox temporary-exception.iokit-user-client-class
+            // 只白名单 "IOUserUserClient" / "IO80211APIUserClient", 用其他 class
+            // name 都被 MACF 拒绝 (kIOReturnNotPermitted). 让 kernel allocClassWithName
+            // 找到 Apple 的 IO80211APIUserClient 实例化, 我们当 provider.
+            // 它可能因 provider class 不对 fail init, 但至少能过 sandbox.
+            stub->setProperty("IOUserClientClass", "IO80211APIUserClient");
             stub->registerService();
             XYLog("Path B: stub IOService for %s registered (Role=Infrastructure)\n", ifname);
         } else {
