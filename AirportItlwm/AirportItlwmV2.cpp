@@ -119,6 +119,9 @@ struct macos_ifnet_init_eparams {
 extern "C" {
 errno_t ifnet_allocate_extended(const struct macos_ifnet_init_eparams *init,
                                  ifnet_t *interface);
+// kernel public KPI for crossing user/kernel address boundary
+int copyin(uint64_t uaddr, void *kaddr, size_t len);
+int copyout(const void *kaddr, uint64_t uaddr, size_t len);
 }
 #endif
 
@@ -251,8 +254,51 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
         XYLog("PathB private 0xC020699F: written functional_type=0x80\n");
         return 0;
     }
+    // Phase 2: dispatch apple80211 ioctl 给现有 AirportSTAIOCTL.cpp 的
+    // apple80211Request handler. struct apple80211req 在 ioctl arg buf 里,
+    // req_data 是 user pointer 需要 copyin/copyout (kernel _copyin/_copyout
+    // 是 public symbol nm 验证).
     if (cmd == (unsigned long)SIOCSA80211 || cmd == (unsigned long)SIOCGA80211) {
-        return EOPNOTSUPP;
+        AirportItlwm *self = (AirportItlwm *)ifnet_softc(ifp);
+        if (!self) return EINVAL;
+        struct apple80211req *req = (struct apple80211req *)arg;
+        if (req->req_len > 65536) return EINVAL;
+
+        void *kbuf = NULL;
+        size_t klen = req->req_len;
+        if (klen > 0) {
+            kbuf = IOMalloc(klen);
+            if (!kbuf) return ENOMEM;
+            bzero(kbuf, klen);
+            if (cmd == (unsigned long)SIOCSA80211 && req->req_data) {
+                if (copyin((uint64_t)(uintptr_t)req->req_data, kbuf, klen) != 0) {
+                    IOFree(kbuf, klen);
+                    return EFAULT;
+                }
+            }
+        }
+
+        SInt32 r = self->apple80211Request(
+            cmd == (unsigned long)SIOCSA80211 ? SIOCSA80211 : SIOCGA80211,
+            req->req_type,
+            NULL,
+            kbuf);
+
+        int rc = 0;
+        if (r != kIOReturnSuccess) {
+            rc = EOPNOTSUPP;
+        } else if (cmd == (unsigned long)SIOCGA80211 && klen > 0 && req->req_data) {
+            if (copyout(kbuf, (uint64_t)(uintptr_t)req->req_data, klen) != 0) {
+                rc = EFAULT;
+            }
+        }
+
+        XYLog("PathB SIOC%cA80211 type=%d len=%u → IOReturn 0x%x errno=%d\n",
+              cmd == (unsigned long)SIOCSA80211 ? 'S' : 'G',
+              req->req_type, req->req_len, r, rc);
+
+        if (kbuf) IOFree(kbuf, klen);
+        return rc;
     }
     if (cmd == (unsigned long)SIOCSIFFLAGS ||
         cmd == (unsigned long)SIOCSIFADDR ||
