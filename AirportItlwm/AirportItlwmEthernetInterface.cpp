@@ -99,6 +99,16 @@ prepareBSDInterfaceGated(OSObject *target, void *interfaceArg,
     }
     return kIOReturnSuccess;
 }
+
+// Sequoia: short-circuit BSD performCommand chain. See header for full
+// rationale. Body intentionally trivial — return Unsupported without
+// calling super::performCommand which would dispatch into Apple's broken
+// executeCommand → executeCommandAction → packet[+0x10] (= gMetaClass).
+SInt32 AirportItlwmEthernetInterface::
+performCommand(IONetworkController *, unsigned long, void *, void *)
+{
+    return kIOReturnUnsupported;
+}
 #endif
 
 void AirportItlwmEthernetInterface::
