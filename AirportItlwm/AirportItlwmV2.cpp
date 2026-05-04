@@ -476,7 +476,15 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
     //
     // en99 是纯 BSD ifnet 没 IOKit binding, 所以 FindService 返 0 → reject.
     // 挂个 IOService stub child 上来, 带这两个 property 即可命中.
-    IOService *stub = OSTypeAlloc(IOService);
+    // Plan A v3: stub 必须 IS-A IO80211SkywalkInterface — Apple
+    // IO80211APIUserClient::commonStart() 的第一个 check 是
+    // OSDynamicCast(IO80211SkywalkInterface, provider). 反编译 KDK
+    // 15.7.5 IO80211Family 锁定. 直接 OSTypeAlloc Apple 的类, 无需子类.
+    // commonStart 第二 check: provider->GetProvider() 必须 IS-A
+    // IO80211Controller — 我们 attach 到 AirportItlwm (IO80211Controller 子类).
+    // commonStart 第三 check: controller->getWorkQueue() 非空 — _fWorkloop
+    // 在 start() 末尾 = IO80211WorkQueue::workQueue() 非空.
+    IOService *stub = (IOService *)OSTypeAlloc(IO80211SkywalkInterface);
     if (stub) {
         if (stub->init() && stub->attach(self)) {
             char ifname[16];
@@ -484,11 +492,6 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
                      ifnet_name(gBsdWlanIfnet), ifnet_unit(gBsdWlanIfnet));
             stub->setProperty("IOInterfaceName", ifname);
             stub->setProperty("IO80211InterfaceRole", "Infrastructure");
-            // Plan A v2: airportd sandbox temporary-exception.iokit-user-client-class
-            // 只白名单 "IOUserUserClient" / "IO80211APIUserClient", 用其他 class
-            // name 都被 MACF 拒绝 (kIOReturnNotPermitted). 让 kernel allocClassWithName
-            // 找到 Apple 的 IO80211APIUserClient 实例化, 我们当 provider.
-            // 它可能因 provider class 不对 fail init, 但至少能过 sandbox.
             stub->setProperty("IOUserClientClass", "IO80211APIUserClient");
             stub->registerService();
             XYLog("Path B: stub IOService for %s registered (Role=Infrastructure)\n", ifname);
