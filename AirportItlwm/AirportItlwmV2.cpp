@@ -139,14 +139,20 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
     XYLog("PathB bsd_wlan_ioctl cmd=0x%lx\n", cmd);
 
     if (cmd == MACOS_SIOCGIFMEDIA) {
-        // 用 macos_ifmediareq layout (44 bytes packed) 写, 不要用 OpenBSD 64-byte 版本.
+        // 用 macos_ifmediareq layout (44 bytes packed) + 显式 macOS 数值
+        // (不用 IFM_* macro, 因为 fork OpenBSD if_media.h 把 IFM_IEEE80211
+        // redefine 为 0x400ULL, 跟 macOS 0x80 不一致).
+        // macOS values from /Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk/usr/include/net/if_media.h:
+        //   IFM_IEEE80211 = 0x80, IFM_AUTO = 0
+        //   IFM_AVALID    = 0x00000001 (in ifm_status)
+        //   IFM_ACTIVE    = 0x00000002
         struct macos_ifmediareq *ifmr = (struct macos_ifmediareq *)arg;
         XYLog("PathB GIFMEDIA pre: current=0x%x active=0x%x count=%d\n",
               ifmr->ifm_current, ifmr->ifm_active, ifmr->ifm_count);
-        ifmr->ifm_current = IFM_IEEE80211 | IFM_AUTO;  // 0x80
-        ifmr->ifm_active  = IFM_IEEE80211 | IFM_AUTO;
+        ifmr->ifm_current = 0x80;  // IFM_IEEE80211 | IFM_AUTO (macOS value)
+        ifmr->ifm_active  = 0x80;
         ifmr->ifm_mask    = 0;
-        ifmr->ifm_status  = IFM_AVALID | IFM_ACTIVE;
+        ifmr->ifm_status  = 0x3;   // IFM_AVALID | IFM_ACTIVE
         ifmr->ifm_count   = 0;
         XYLog("PathB GIFMEDIA post: current=0x%x active=0x%x\n",
               ifmr->ifm_current, ifmr->ifm_active);
