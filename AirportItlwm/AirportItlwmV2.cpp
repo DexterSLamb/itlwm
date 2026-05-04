@@ -355,6 +355,57 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
     return EOPNOTSUPP;
 }
 
+// Plan A: Apple80211UserClient on stub IOService.
+// airportd 的控制平面 (scan/associate/setpower/...) 不走 BSD ioctl, 走
+// IOServiceOpen → IOUserClient::externalMethod. 之前 stub 没 UserClient 所以
+// IOServiceOpen 返 -536870201/0xe00002c7 = kIOReturnUnsupported, airportd
+// fallback 到 BSD ioctl, 但 BSD ioctl 只接受 GET, SET 都跑不到我们.
+//
+// 实现 IOUserClient + 给 stub publish IOUserClientClass="BsdWlanUserClient",
+// IOServiceOpen 就成功. 第一版 externalMethod 全部 log selector 返 Unsupported,
+// 用 dmesg 看 airportd 实际调啥, 一个 selector 一个加.
+class BsdWlanUserClient : public IOUserClient {
+    OSDeclareDefaultStructors(BsdWlanUserClient)
+public:
+    virtual bool initWithTask(task_t owningTask, void *securityID,
+                              UInt32 type, OSDictionary *properties) override {
+        XYLog("BsdWlanUserClient: initWithTask type=%u\n", (uint32_t)type);
+        return IOUserClient::initWithTask(owningTask, securityID, type, properties);
+    }
+
+    virtual bool start(IOService *provider) override {
+        XYLog("BsdWlanUserClient: start provider=%p\n", provider);
+        return IOUserClient::start(provider);
+    }
+
+    virtual IOReturn clientClose() override {
+        XYLog("BsdWlanUserClient: clientClose\n");
+        terminate();
+        return kIOReturnSuccess;
+    }
+
+    virtual IOReturn externalMethod(uint32_t selector,
+                                     IOExternalMethodArguments *args,
+                                     IOExternalMethodDispatch *dispatch,
+                                     OSObject *target,
+                                     void *reference) override {
+        XYLog("BsdWlanUserClient: externalMethod sel=%u scIn=%u scOut=%u stIn=%llu stOut=%llu\n",
+              selector,
+              (uint32_t)args->scalarInputCount,
+              (uint32_t)args->scalarOutputCount,
+              (unsigned long long)args->structureInputSize,
+              (unsigned long long)args->structureOutputSize);
+        // 先不 dispatch, 全返 Unsupported. airportd 会看到 EINVAL/Unsupported 但
+        // IOServiceOpen 已经成功 → 它至少不再 fallback ioctl.
+        return kIOReturnUnsupported;
+    }
+};
+
+#define super IOUserClient
+OSDefineMetaClassAndStructors(BsdWlanUserClient, IOUserClient)
+#undef super
+#define super IO80211Controller // 恢复, V2.cpp 后面 method 是 AirportItlwm
+
 // Phase 1: 创建并 attach 我们自己的 BSD wifi ifnet.
 // 用 ifnet_allocate_extended (私有 KPI) + ifnet_init_eparams 设 subfamily=WIFI(3),
 // 让 _getIfListCopy 主路径接受 (type=IFT_ETHER + sub=WIFI).
@@ -432,6 +483,9 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
                      ifnet_name(gBsdWlanIfnet), ifnet_unit(gBsdWlanIfnet));
             stub->setProperty("IOInterfaceName", ifname);
             stub->setProperty("IO80211InterfaceRole", "Infrastructure");
+            // Plan A: 让 IOServiceOpen 走我们的 UserClient. kxld 会按 class
+            // name 找到 BsdWlanUserClient 的 OSMetaClass 实例化.
+            stub->setProperty("IOUserClientClass", "BsdWlanUserClient");
             stub->registerService();
             XYLog("Path B: stub IOService for %s registered (Role=Infrastructure)\n", ifname);
         } else {
