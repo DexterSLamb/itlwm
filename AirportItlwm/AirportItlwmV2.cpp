@@ -116,37 +116,35 @@ static errno_t bsd_wlan_output(ifnet_t ifp, mbuf_t packet) {
 // apple80211 ioctl SIOCSA80211/SIOCGA80211 在 Phase 2 再 dispatch.
 static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
     (void)ifp;
-    // Phase 1 debug: log every ioctl 看 handler 是否真的被 BSD 调到
-    XYLog("PathB bsd_wlan_ioctl cmd=0x%lx\n", cmd);
+    // Phase 1 debug: log cmd entry + SIOCGIFMEDIA macro 展开值供对比
+    XYLog("PathB bsd_wlan_ioctl cmd=0x%lx (SIOCGIFMEDIA macro=0x%lx)\n",
+          cmd, (unsigned long)SIOCGIFMEDIA);
 
-    switch (cmd) {
-    case SIOCSA80211:
-    case SIOCGA80211:
-        // Phase 2 TODO: dispatch req->req_type to specific apple80211 handler
-        // (V2 class 没 apple80211Request 整合方法, 需要单独写 dispatch).
-        return EOPNOTSUPP;
-    case SIOCGIFMEDIA: {
-        // airportd._getIfListCopy 检查 (ifm_current & 0xe0) == 0x80 (IFM_IEEE80211).
+    // Use direct numeric comparison instead of switch case; 之前 switch 没 match
+    // SIOCGIFMEDIA, 怀疑 case label 类型 promotion 异常.
+    if (cmd == (unsigned long)SIOCGIFMEDIA || cmd == 0xC02C6938UL) {
         struct ifmediareq *ifmr = (struct ifmediareq *)arg;
-        XYLog("PathB GIFMEDIA pre: current=0x%x active=0x%x count=%d\n",
-              ifmr->ifm_current, ifmr->ifm_active, ifmr->ifm_count);
+        XYLog("PathB GIFMEDIA hit: pre current=0x%x active=0x%x\n",
+              ifmr->ifm_current, ifmr->ifm_active);
         ifmr->ifm_current = IFM_IEEE80211 | IFM_AUTO;
         ifmr->ifm_active  = IFM_IEEE80211 | IFM_AUTO;
         ifmr->ifm_mask    = 0;
         ifmr->ifm_status  = IFM_AVALID | IFM_ACTIVE;
-        ifmr->ifm_count   = 0;  // user list 不填, count 为 0 让 caller 不 try copyout
-        XYLog("PathB GIFMEDIA post: current=0x%x active=0x%x\n",
-              ifmr->ifm_current, ifmr->ifm_active);
+        ifmr->ifm_count   = 0;
+        XYLog("PathB GIFMEDIA hit: post current=0x%x\n", ifmr->ifm_current);
         return 0;
     }
-    case SIOCSIFFLAGS:
-    case SIOCSIFADDR:
-    case SIOCADDMULTI:
-    case SIOCDELMULTI:
-        return 0;
-    default:
+    if (cmd == (unsigned long)SIOCSA80211 || cmd == (unsigned long)SIOCGA80211) {
         return EOPNOTSUPP;
     }
+    if (cmd == (unsigned long)SIOCSIFFLAGS ||
+        cmd == (unsigned long)SIOCSIFADDR ||
+        cmd == (unsigned long)SIOCADDMULTI ||
+        cmd == (unsigned long)SIOCDELMULTI) {
+        return 0;
+    }
+    XYLog("PathB unhandled cmd=0x%lx\n", cmd);
+    return EOPNOTSUPP;
 }
 
 // Phase 1: 创建并 attach 我们自己的 BSD wifi ifnet.
