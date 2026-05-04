@@ -25,6 +25,11 @@ extern "C" {
 #include <net/if_media.h>
 #include <sys/sockio.h>
 }
+// macOS SDK 不暴露 IFT_IEEE80211 (FreeBSD/NetBSD 历史值 71). airportd 不
+// 检查 ifa_type, 所以可以用 IFT_OTHER (1) 代替, 用 BSD 公开 IFT.
+#ifndef IFT_IEEE80211
+#define IFT_IEEE80211 0x47    /* 71 — historic value, may be ignored by macOS */
+#endif
 #endif
 
 #define super IO80211Controller
@@ -107,20 +112,17 @@ static errno_t bsd_wlan_output(ifnet_t ifp, mbuf_t packet) {
     return 0;
 }
 
-// IOCTL handler: dispatch apple80211 ioctl 到现有 driver handler;
-// SIOCGIFMEDIA 返 IFM_IEEE80211 让 airportd._getIfListCopy 接受.
+// IOCTL handler: Phase 1 minimal — 只处理 SIOCGIFMEDIA 让 airportd 接受我们,
+// apple80211 ioctl SIOCSA80211/SIOCGA80211 在 Phase 2 再 dispatch.
 static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
-    AirportItlwm *self = (AirportItlwm *)ifnet_softc(ifp);
+    (void)ifp;
 
     switch (cmd) {
     case SIOCSA80211:
-    case SIOCGA80211: {
-        if (!self || !arg) return EINVAL;
-        struct apple80211req *req = (struct apple80211req *)arg;
-        SInt32 r = self->apple80211Request((unsigned int)cmd, req->req_type,
-                                            NULL, req);
-        return (r == kIOReturnSuccess) ? 0 : EOPNOTSUPP;
-    }
+    case SIOCGA80211:
+        // Phase 2 TODO: dispatch req->req_type to specific apple80211 handler
+        // (V2 class 没 apple80211Request 整合方法, 需要单独写 dispatch).
+        return EOPNOTSUPP;
     case SIOCGIFMEDIA: {
         // airportd._getIfListCopy 检查 (ifm_current & 0xe0) == 0x80 (IFM_IEEE80211).
         struct ifmediareq *ifmr = (struct ifmediareq *)arg;
@@ -864,8 +866,8 @@ bool AirportItlwm::start(IOService *provider)
     {
         TRACE_STEP("22a_pre_createBsdWlanIfnet");
         u_int8_t mac[6];
-        if (fHalService && fHalService->getDriverInfo()) {
-            memcpy(mac, fHalService->getDriverInfo()->getEthAddress(), 6);
+        if (fHalService && fHalService->get80211Controller()) {
+            memcpy(mac, fHalService->get80211Controller()->ic_myaddr, 6);
         } else {
             memset(mac, 0, 6);
         }
