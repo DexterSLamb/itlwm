@@ -24,31 +24,6 @@ IO80211WorkQueue *_fWorkloop;
 IOCommandGate *_fCommandGate;
 
 #if __IO80211_TARGET >= __MAC_15_0
-// Plan A.2: Sequoia 双对象架构.
-//
-// fNetIf (AirportItlwmSkywalkInterface : IO80211InfraProtocol) 处理 apple80211
-// ioctl (getSSID/setASSOCIATE 等 100+ 方法).
-//
-// 但 InfraProtocol 没自己的 prepareBSDInterface, 走 base IO80211SkywalkInterface
-// 默认版本失败 → BSD ifnet 永远不 attach → ifconfig/getifaddrs 看不到我们 →
-// airportd._getIfListCopy 拿不到 → wdutil 报 "No Wi-Fi hardware installed".
-//
-// 解法: 额外手动 instantiate 一个 IO80211InfraInterface 实例 (fInfra). 它的
-// prepareBSDInterface 走 InfraInterface 实现, 创建 IFM_IEEE80211 类型 BSD ifnet,
-// updateStaticProperties 通过 IO80211Glue::sendIOUCToWcl(SIOCSA80211) 把
-// apple80211 ioctl 转发给 fNetIf 处理.
-//
-// vtable 分析: IO80211InfraInterface 468 个 vtable 槽, 仅 1 个 pure virtual
-// (slot 417 / byte offset 0xd08). 编译报错时 kxld/clang 会告诉我们方法名.
-//
-// 详细 RE: docs/010-sequoia-airportd-enumeration.md.
-class AirportItlwmInfraInterface : public IO80211InfraInterface {
-    OSDeclareDefaultStructors(AirportItlwmInfraInterface)
-};
-OSDefineMetaClassAndStructors(AirportItlwmInfraInterface, IO80211InfraInterface);
-#endif
-
-#if __IO80211_TARGET >= __MAC_15_0
 // Function pointers populated from IOResources properties published by
 // AirportItlwmShim.kext (Lilu plugin). See AirportItlwmShim_glue.hpp.
 TxWithPoolFn  gShimTxWithPool  = nullptr;
