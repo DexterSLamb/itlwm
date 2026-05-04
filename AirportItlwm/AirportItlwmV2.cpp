@@ -116,6 +116,8 @@ static errno_t bsd_wlan_output(ifnet_t ifp, mbuf_t packet) {
 // apple80211 ioctl SIOCSA80211/SIOCGA80211 在 Phase 2 再 dispatch.
 static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
     (void)ifp;
+    // Phase 1 debug: log every ioctl 看 handler 是否真的被 BSD 调到
+    XYLog("PathB bsd_wlan_ioctl cmd=0x%lx\n", cmd);
 
     switch (cmd) {
     case SIOCSA80211:
@@ -126,11 +128,15 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
     case SIOCGIFMEDIA: {
         // airportd._getIfListCopy 检查 (ifm_current & 0xe0) == 0x80 (IFM_IEEE80211).
         struct ifmediareq *ifmr = (struct ifmediareq *)arg;
+        XYLog("PathB GIFMEDIA pre: current=0x%x active=0x%x count=%d\n",
+              ifmr->ifm_current, ifmr->ifm_active, ifmr->ifm_count);
         ifmr->ifm_current = IFM_IEEE80211 | IFM_AUTO;
         ifmr->ifm_active  = IFM_IEEE80211 | IFM_AUTO;
         ifmr->ifm_mask    = 0;
         ifmr->ifm_status  = IFM_AVALID | IFM_ACTIVE;
         ifmr->ifm_count   = 0;  // user list 不填, count 为 0 让 caller 不 try copyout
+        XYLog("PathB GIFMEDIA post: current=0x%x active=0x%x\n",
+              ifmr->ifm_current, ifmr->ifm_active);
         return 0;
     }
     case SIOCSIFFLAGS:
