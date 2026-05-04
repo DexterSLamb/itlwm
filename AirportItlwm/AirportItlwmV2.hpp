@@ -256,7 +256,17 @@ public:
     };
     virtual IOReturn getCARD_CAPABILITIES(IO80211SkywalkInterface *interface,apple80211_capability_data *data) override {
 //        XYLog("%s\n", __FUNCTION__);
+#if __IO80211_TARGET >= __MAC_15_0
+        // H2 实验: panic 在 IO80211Family 的 static getCARD_CAPABILITIES 内
+        // (offset 0xfcae5, framework buffer 24 bytes), 反汇编显示我们 driver
+        // memset 20 bytes 不超界. 但 panic 仍在 — 可能 vtable slot 偏移错位
+        // 让 framework 调到错误 method. 让本 method 完全不写, 返 Unsupported.
+        // 如果 panic 仍在 → 不是我们 driver 写入触发, 是更底层 dispatch 问题.
+        // 如果 panic 消失 → 我们 driver getCARD_CAPABILITIES 是触发点.
+        return kIOReturnUnsupported;
+#else
         return getCARD_CAPABILITIES((OSObject *)interface, data);
+#endif
     }
     virtual IOReturn getPOWER(IO80211SkywalkInterface *interface,apple80211_power_data *data) override {
 //        XYLog("%s\n", __FUNCTION__);
