@@ -92,54 +92,36 @@ static KernelPatcher::KextInfo gIONetKext {
 
 static bool gTraceEnabled = false;
 
-static mach_vm_address_t gOrig_performCommand        = 0;
-static mach_vm_address_t gOrig_executeCommand        = 0;
 static mach_vm_address_t gOrig_executeCommandAction  = 0;
 
-// IOEthernetInterface::performCommand
-typedef int32_t (*performCommand_t)(void *self, void *ctrl, unsigned long cmd, void *arg0, void *arg1);
-static int32_t my_performCommand(void *self, void *ctrl, unsigned long cmd, void *arg0, void *arg1)
-{
-    kprintf("[aitrace] performCommand ENTRY this=%p ctrl=%p cmd=0x%lx arg0=%p arg1=%p\n",
-            self, ctrl, cmd, arg0, arg1);
-    int32_t r = reinterpret_cast<performCommand_t>(gOrig_performCommand)(self, ctrl, cmd, arg0, arg1);
-    kprintf("[aitrace] performCommand RETURN cmd=0x%lx ret=%d\n", cmd, r);
-    return r;
-}
-
-// IONetworkController::executeCommand(OSObject*, Action, void*, void*, void*, void*, void*)
-typedef int (*executeCommand_t)(void *self, void *client, void *action,
-                                void *target, void *p0, void *p1, void *p2, void *p3);
-static int my_executeCommand(void *self, void *client, void *action,
-                             void *target, void *p0, void *p1, void *p2, void *p3)
-{
-    kprintf("[aitrace] executeCommand ENTRY this=%p client=%p action=%p target=%p p0=%p p1=%p p2=%p p3=%p\n",
-            self, client, action, target, p0, p1, p2, p3);
-    int r = reinterpret_cast<executeCommand_t>(gOrig_executeCommand)(self, client, action, target, p0, p1, p2, p3);
-    kprintf("[aitrace] executeCommand RETURN action=%p ret=%d\n", action, r);
-    return r;
-}
+// Cap kprintf output to avoid hanging boot. We only need a handful of trace
+// events to find the corruption point — the panic happens deterministically.
+static volatile uint32_t gTraceCount = 0;
+static const uint32_t kTraceMax = 200;
 
 // IONetworkController::executeCommandAction(OSObject*, void*, void*, void*, void*)
-// arg0 = packet (the struct executeCommand built on its stack)
+// arg0 (rsi) = packet (struct executeCommand built on its stack, [+0x10] = action func ptr)
+// We hook ONLY this function (not performCommand/executeCommand) because:
+//   1. It runs only when actual dispatches happen — not per-ioctl
+//   2. It's the function whose call site (call [r14+0x10]) NX-faults to
+//      gMetaClass — directly upstream of the crash
+//   3. Hooking the upstream functions caused boot loops (called too often)
 typedef int (*executeCommandAction_t)(void *owner, void *packet, void *a1, void *a2, void *a3);
 static int my_executeCommandAction(void *owner, void *packet, void *a1, void *a2, void *a3)
 {
-    if (packet) {
-        // Dump packet contents — especially [+0x10] = action func ptr that
-        // gets called next. If it's gMetaClass, we have our smoking gun.
-        uint64_t *p = static_cast<uint64_t *>(packet);
-        kprintf("[aitrace] ECA ENTRY owner=%p packet=%p\n", owner, packet);
-        kprintf("[aitrace] ECA packet[0..7] = %016llx %016llx %016llx %016llx\n",
-                p[0], p[1], p[2], p[3]);
-        kprintf("[aitrace] ECA packet[+0x10]=%016llx (this is the action that's about to be called)\n",
-                p[2]);
-    } else {
-        kprintf("[aitrace] ECA ENTRY owner=%p packet=NULL (FALLBACK path)\n", owner);
+    uint32_t n = __c11_atomic_fetch_add(reinterpret_cast<volatile _Atomic uint32_t *>(&gTraceCount), 1, __ATOMIC_RELAXED);
+    if (n < kTraceMax) {
+        if (packet) {
+            uint64_t *p = static_cast<uint64_t *>(packet);
+            kprintf("[aitrace] #%u ECA owner=%p packet=%p p[0]=%llx p[1]=%llx p[2]=%llx p[3]=%llx\n",
+                    n, owner, packet, p[0], p[1], p[2], p[3]);
+            // The killer: p[2] = packet[+0x10] = action func ptr that gets called.
+            // If it's IO80211InfraProtocol::gMetaClass we found our bug.
+        } else {
+            kprintf("[aitrace] #%u ECA owner=%p packet=NULL (fallback)\n", n, owner);
+        }
     }
-    int r = reinterpret_cast<executeCommandAction_t>(gOrig_executeCommandAction)(owner, packet, a1, a2, a3);
-    kprintf("[aitrace] ECA RETURN ret=%d\n", r);
-    return r;
+    return reinterpret_cast<executeCommandAction_t>(gOrig_executeCommandAction)(owner, packet, a1, a2, a3);
 }
 
 // ============================================================================
@@ -282,57 +264,25 @@ void AirportItlwmShimPlugin::onKextLoad(KernelPatcher &kp, size_t idx,
             kp.clearError();
         }
     } else if (gTraceEnabled && idx == gIONetKext.loadIndex) {
-        // Install trace hooks on the three key dispatch points
-        auto pc = kp.solveSymbol(idx,
-            "__ZN19IOEthernetInterface14performCommandEP19IONetworkControllermPvS2_");
-        kp.clearError();
-        if (pc) {
-            gOrig_performCommand = kp.routeFunction(pc,
-                reinterpret_cast<mach_vm_address_t>(my_performCommand),
-                /*buildWrapper*/ true,
-                /*kernelRoute*/ true);
-            kp.clearError();
-            if (gOrig_performCommand)
-                kprintf("[aitrace] performCommand hook installed @ 0x%llx orig=0x%llx\n",
-                        pc, gOrig_performCommand);
-            else
-                SYSLOG("aishim", "performCommand routeFunction failed");
-        } else {
-            SYSLOG("aishim", "performCommand symbol not found");
-        }
-
-        auto ec = kp.solveSymbol(idx,
-            "__ZN19IONetworkController14executeCommandEP8OSObjectPFiPvS2_S2_S2_S2_ES2_S2_S2_S2_S2_");
-        kp.clearError();
-        if (ec) {
-            gOrig_executeCommand = kp.routeFunction(ec,
-                reinterpret_cast<mach_vm_address_t>(my_executeCommand),
-                true, true);
-            kp.clearError();
-            if (gOrig_executeCommand)
-                kprintf("[aitrace] executeCommand hook installed @ 0x%llx orig=0x%llx\n",
-                        ec, gOrig_executeCommand);
-            else
-                SYSLOG("aishim", "executeCommand routeFunction failed");
-        } else {
-            SYSLOG("aishim", "executeCommand symbol not found");
-        }
-
+        // ONLY hook executeCommandAction. v1 also hooked performCommand and
+        // executeCommand; that caused boot loop (called thousands of times
+        // per second early in boot, kprintf overhead halts system).
         auto eca = kp.solveSymbol(idx,
             "__ZN19IONetworkController20executeCommandActionEP8OSObjectPvS2_S2_S2_");
         kp.clearError();
         if (eca) {
             gOrig_executeCommandAction = kp.routeFunction(eca,
                 reinterpret_cast<mach_vm_address_t>(my_executeCommandAction),
-                true, true);
+                /*buildWrapper*/ true,
+                /*kernelRoute*/ true);
             kp.clearError();
             if (gOrig_executeCommandAction)
-                kprintf("[aitrace] executeCommandAction hook installed @ 0x%llx orig=0x%llx\n",
+                kprintf("[aitrace] ECA hook installed @ 0x%llx orig=0x%llx\n",
                         eca, gOrig_executeCommandAction);
             else
-                SYSLOG("aishim", "executeCommandAction routeFunction failed");
+                SYSLOG("aishim", "ECA routeFunction failed");
         } else {
-            SYSLOG("aishim", "executeCommandAction symbol not found");
+            SYSLOG("aishim", "ECA symbol not found");
         }
     }
 
