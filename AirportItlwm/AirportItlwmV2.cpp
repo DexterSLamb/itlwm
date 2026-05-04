@@ -724,39 +724,6 @@ bool AirportItlwm::start(IOService *provider)
     // and BSD ifnet.
     fNetIf->deferBSDAttach(false);
     TRACE_STEP("20b_post_deferBSDAttach_false");
-
-    // Plan A.2: instantiate IO80211InfraInterface 子类.
-    // fNetIf (InfraProtocol) 单独不能让 BSD ifnet 以 IFM_IEEE80211 类型 attach.
-    // fInfra (InfraInterface) 才有正确的 prepareBSDInterface, 创建 WiFi-typed ifnet,
-    // airportd._getIfListCopy(getifaddrs+SIOCGIFMEDIA) 才能识别我们.
-    //
-    // 不存 field, 让 framework 持有 (registerService 后 IO catalog 维护引用).
-    {
-        TRACE_STEP("21a_pre_infra_alloc");
-        AirportItlwmInfraInterface *fInfra = new AirportItlwmInfraInterface;
-        if (!fInfra) {
-            TRACE_STEP("FAIL_infra_alloc");
-            XYLog("AirportItlwmInfraInterface alloc failed\n");
-        } else if (!fInfra->init()) {
-            TRACE_STEP("FAIL_infra_init");
-            XYLog("AirportItlwmInfraInterface init failed\n");
-            fInfra->release();
-        } else if (!fInfra->attach(this)) {
-            TRACE_STEP("FAIL_infra_attach");
-            XYLog("AirportItlwmInfraInterface attach(this) failed\n");
-            fInfra->release();
-        } else if (!fInfra->start(this)) {
-            TRACE_STEP("FAIL_infra_start");
-            XYLog("AirportItlwmInfraInterface start(this) failed\n");
-            fInfra->detach(this);
-            fInfra->release();
-        } else {
-            TRACE_STEP("21b_post_infra_start");
-            fInfra->registerService();
-            XYLog("AirportItlwmInfraInterface registered ok\n");
-            TRACE_STEP("21c_post_infra_register");
-        }
-    }
 #endif
 
     setLinkStatus(kIONetworkLinkValid);
