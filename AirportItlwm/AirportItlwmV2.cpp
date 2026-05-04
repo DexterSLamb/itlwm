@@ -536,7 +536,30 @@ bool AirportItlwm::start(IOService *provider)
     }
 #endif
     TRACE_STEP("13_post_skywalkInit");
+#if __IO80211_TARGET >= __MAC_15_0
+    // H1 实验 (skip setInterfaceRole=1 on Sequoia): 反编译确认 setInterfaceRole(1)
+    // 写 ivars[0x110]+0x58=1, IO80211SkywalkInterface::start 检测到这个值后
+    // 创建 IO80211Glue 存在 ivars[0x110]+0xd8.
+    //
+    // 之后 configd 调 GET_STATE 时:
+    //   static getSTATE 看 Glue ptr 非 NULL → 调 sendIOUCToWcl
+    //   → sendIOUCToWcl 内部 dispatch block 到 WCL workqueue 跑
+    //   → block 内某个 deref ([req_data + 0x8]) 假定 kernel-side struct layout
+    //     而 caller 给的是 8-byte buffer → 越界访问 → corrupt 调用方栈 canary
+    //   → static getSTATE return 时 stack_chk_fail → kernel panic
+    //
+    // H1 假设: 跳过 setInterfaceRole(1) → Glue 不创建 → sendIOUCToWcl 不被调用 →
+    //          boot 稳定不 panic.
+    //
+    // 副作用: 走 Glue 转发的 apple80211 ioctl 全部失败. 但目前 apple80211getSTATE
+    //         本身就不识别 InfraProtocol class 走 fail path, 所以 effectively 0
+    //         功能 regression.
+    //
+    // Sonoma 14.x 不受影响, 走原 setInterfaceRole(1) 路径.
+    TRACE_STEP("13b_skip_setInterfaceRole_H1");
+#else
     fNetIf->setInterfaceRole(1);
+#endif
     fNetIf->setInterfaceId(1);
 
 #if __IO80211_TARGET < __MAC_15_0
