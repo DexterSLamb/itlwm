@@ -13,21 +13,7 @@
 
 class AirportItlwm;
 
-// Sequoia 15.x: 必须继承 IO80211InfraInterface (而非 InfraProtocol).
-// InfraProtocol 是 driver-side protocol/role 类, 没自己的
-// prepareBSDInterface 实现, 走 base IO80211SkywalkInterface 的版本,
-// 该版本调用 vtable[0x8f8] 一个被 InfraInterface override 的虚方法,
-// 不 override 直接 fail → BSD ifnet 永远不 attach → ifconfig 看不到我们,
-// airportd 的 _getIfListCopy(getifaddrs+SIOCGIFMEDIA) 拿不到我们 →
-// wdutil 报 "No Wi-Fi hardware installed".
-// 详见 docs/010-sequoia-airportd-enumeration.md.
-//
-// Sonoma 14.x 保留原 InfraProtocol 继承不动 -- 14.x 已 ship 工作.
-#if __IO80211_TARGET >= __MAC_15_0
-class AirportItlwmSkywalkInterface : public IO80211InfraInterface {
-#else
 class AirportItlwmSkywalkInterface : public IO80211InfraProtocol {
-#endif
     OSDeclareDefaultStructors(AirportItlwmSkywalkInterface)
 
 public:
