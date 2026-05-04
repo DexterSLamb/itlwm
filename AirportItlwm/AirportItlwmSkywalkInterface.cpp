@@ -15,13 +15,7 @@
 #include <net80211/ieee80211_priv.h>
 
 #define super IO80211InfraProtocol
-// Sequoia 15.x: 类 super 改为 IO80211InfraInterface (见 hpp 注释).
-// Sonoma 14.x 保留原 InfraProtocol.
-#if __IO80211_TARGET >= __MAC_15_0
-OSDefineMetaClassAndStructors(AirportItlwmSkywalkInterface, IO80211InfraInterface);
-#else
 OSDefineMetaClassAndStructors(AirportItlwmSkywalkInterface, IO80211InfraProtocol);
-#endif
 
 #if __IO80211_TARGET >= __MAC_15_0
 // Sequoia 15.7.5 vtable slot 419 (ZTV byte 0xd18, vptr byte 0xd08).
