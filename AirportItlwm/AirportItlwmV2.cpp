@@ -142,20 +142,23 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
         // 用 macos_ifmediareq layout (44 bytes packed) + 显式 macOS 数值
         // (不用 IFM_* macro, 因为 fork OpenBSD if_media.h 把 IFM_IEEE80211
         // redefine 为 0x400ULL, 跟 macOS 0x80 不一致).
-        // macOS values from /Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk/usr/include/net/if_media.h:
-        //   IFM_IEEE80211 = 0x80, IFM_AUTO = 0
-        //   IFM_AVALID    = 0x00000001 (in ifm_status)
-        //   IFM_ACTIVE    = 0x00000002
         struct macos_ifmediareq *ifmr = (struct macos_ifmediareq *)arg;
-        XYLog("PathB GIFMEDIA pre: current=0x%x active=0x%x count=%d\n",
-              ifmr->ifm_current, ifmr->ifm_active, ifmr->ifm_count);
         ifmr->ifm_current = 0x80;  // IFM_IEEE80211 | IFM_AUTO (macOS value)
         ifmr->ifm_active  = 0x80;
         ifmr->ifm_mask    = 0;
         ifmr->ifm_status  = 0x3;   // IFM_AVALID | IFM_ACTIVE
         ifmr->ifm_count   = 0;
-        XYLog("PathB GIFMEDIA post: current=0x%x active=0x%x\n",
-              ifmr->ifm_current, ifmr->ifm_active);
+        XYLog("PathB GIFMEDIA: written 0x80\n");
+        return 0;
+    }
+    // Apple 私有 ioctl 0xC020699F (size=32=sizeof(ifreq), num=159, group='i').
+    // 反编译 IO80211.framework _getIfListCopy 显示主路径用这个 cmd 而非
+    // SIOCGIFTYPE; acceptance criteria: 返 0 + (ifr.functional_type & 0xe0) == 0x80.
+    // ifr layout: char ifr_name[16], 然后 ifr_ifru union from offset 16.
+    // ifru_functional_type 是 u_int32_t at offset 16. 写 0x80 让 main path 接受.
+    if (cmd == 0xC020699FUL) {
+        *(uint32_t *)((char *)arg + 16) = 0x80;
+        XYLog("PathB private 0xC020699F: written functional_type=0x80\n");
         return 0;
     }
     if (cmd == (unsigned long)SIOCSA80211 || cmd == (unsigned long)SIOCGA80211) {
