@@ -25,11 +25,19 @@ extern "C" {
 #include <net/if_media.h>
 #include <sys/sockio.h>
 }
-// macOS SDK 不暴露 IFT_IEEE80211 (FreeBSD/NetBSD 历史值 71). airportd 不
-// 检查 ifa_type, 所以可以用 IFT_OTHER (1) 代替, 用 BSD 公开 IFT.
+// macOS SDK 不暴露 IFT_IEEE80211 (FreeBSD/NetBSD 历史值 71).
 #ifndef IFT_IEEE80211
-#define IFT_IEEE80211 0x47    /* 71 — historic value, may be ignored by macOS */
+#define IFT_IEEE80211 0x47    /* 71 */
 #endif
+
+// Apple 私有 KPI: 这些 symbol 在 kernel /System/Library/Kernels/kernel exports 表里
+// (nm 验证: T _ifnet_set_lladdr_and_type, T _ifnet_set_eflags), 但不在 user-facing
+// SDK header. Apple 自家 IO80211Family kext 用它. 我们 extern "C" declare,
+// kxld 链接时去 kernel 找 symbol. 如果 link fail → kext load 失败 (明确 error).
+extern "C" {
+errno_t ifnet_set_lladdr_and_type(ifnet_t interface, const void *lladdr,
+                                   size_t lladdr_len, u_char new_type);
+}
 #endif
 
 #define super IO80211Controller
@@ -202,7 +210,17 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
         return false;
     }
 
-    ifnet_set_lladdr(gBsdWlanIfnet, mac, 6);
+    // 用私有 KPI ifnet_set_lladdr_and_type 替代 ifnet_set_lladdr,
+    // 一并设 ifa_type=IFT_IEEE80211 (71). 这影响 0xC020699F 这种 kernel
+    // internal ioctl 读 ifnet 的 type 字段.
+    errno_t r2 = ifnet_set_lladdr_and_type(gBsdWlanIfnet, mac, 6, IFT_IEEE80211);
+    if (r2 != 0) {
+        XYLog("Path B: ifnet_set_lladdr_and_type err=%d (private KPI link fail?)\n", r2);
+        // fallback: at least set lladdr
+        ifnet_set_lladdr(gBsdWlanIfnet, mac, 6);
+    } else {
+        XYLog("Path B: lladdr_and_type set OK (type=IFT_IEEE80211)\n");
+    }
     ifnet_set_mtu(gBsdWlanIfnet, 1500);
     // 设 IFF_UP | IFF_RUNNING — airportd._getIfListCopy 可能 require interface
     // up/running 才 enumerate. flags 8802 (没 UP) 时 airportd reject.
