@@ -16,6 +16,17 @@
 #include "IOPCIEDeviceWrapper.hpp"
 #include "AirportItlwmShim_glue.hpp"
 
+#if __IO80211_TARGET >= __MAC_15_0
+// Path B: BSD KPI 自建 ifnet, 完全绕开 IO80211Family. 详见 docs/011 (TBD).
+extern "C" {
+#include <net/kpi_interface.h>
+#include <net/if_ether.h>
+#include <net/if_dl.h>
+#include <net/if_media.h>
+#include <sys/sockio.h>
+}
+#endif
+
 #define super IO80211Controller
 OSDefineMetaClassAndStructors(AirportItlwm, IO80211Controller);
 OSDefineMetaClassAndStructors(CTimeout, OSObject)
@@ -79,6 +90,108 @@ skywalkRxAction(OSObject *owner, IOSkywalkRxCompletionQueue *queue,
 {
     (void)owner; (void)queue; (void)packets; (void)refCon;
     return 0;
+}
+
+// Path B Phase 1: 用 BSD KPI public API 自建 ifnet, type=IFT_IEEE80211.
+// 这是 architectural workaround: H4 隔离了 IO80211Family panic (跳过 fNetIf->attach),
+// 但那样 airportd enumerate 不到我们. 这里 attach 一个 BSD-only 的 wifi-typed
+// ifnet, airportd 通过 getifaddrs+SIOCGIFMEDIA 看到 IFM_IEEE80211 接受我们.
+// 完全不依赖 IO80211Family 私有 vtable layout, 用稳定的 BSD KPI public API.
+
+ifnet_t gBsdWlanIfnet = NULL;
+
+// TX output: Phase 1 stub. Phase 3 把 packets 喂给 OpenBSD 80211 stack TX path.
+static errno_t bsd_wlan_output(ifnet_t ifp, mbuf_t packet) {
+    (void)ifp;
+    if (packet) mbuf_freem_list(packet);
+    return 0;
+}
+
+// IOCTL handler: dispatch apple80211 ioctl 到现有 driver handler;
+// SIOCGIFMEDIA 返 IFM_IEEE80211 让 airportd._getIfListCopy 接受.
+static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
+    AirportItlwm *self = (AirportItlwm *)ifnet_softc(ifp);
+
+    switch (cmd) {
+    case SIOCSA80211:
+    case SIOCGA80211: {
+        if (!self || !arg) return EINVAL;
+        struct apple80211req *req = (struct apple80211req *)arg;
+        SInt32 r = self->apple80211Request((unsigned int)cmd, req->req_type,
+                                            NULL, req);
+        return (r == kIOReturnSuccess) ? 0 : EOPNOTSUPP;
+    }
+    case SIOCGIFMEDIA: {
+        // airportd._getIfListCopy 检查 (ifm_current & 0xe0) == 0x80 (IFM_IEEE80211).
+        struct ifmediareq *ifmr = (struct ifmediareq *)arg;
+        ifmr->ifm_current = IFM_IEEE80211 | IFM_AUTO;
+        ifmr->ifm_active  = IFM_IEEE80211 | IFM_AUTO;
+        ifmr->ifm_mask    = 0;
+        ifmr->ifm_status  = IFM_AVALID | IFM_ACTIVE;
+        ifmr->ifm_count   = 0;  // user list 不填, count 为 0 让 caller 不 try copyout
+        return 0;
+    }
+    case SIOCSIFFLAGS:
+    case SIOCSIFADDR:
+    case SIOCADDMULTI:
+    case SIOCDELMULTI:
+        return 0;
+    default:
+        return EOPNOTSUPP;
+    }
+}
+
+// Phase 1: 创建并 attach 我们自己的 BSD wifi ifnet.
+// 在 driver start 末尾调 (H4 stable 之后).
+static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
+    if (gBsdWlanIfnet) return true;
+
+    struct ifnet_init_params init = {};
+    init.name        = "en";   // BSD assign next available unit
+    init.unit        = 99;     // hint; BSD may reassign
+    init.family      = IFNET_FAMILY_ETHERNET;  // 没 _IEEE80211 family, 借 ETHERNET
+    init.type        = IFT_IEEE80211;          // 71 — airportd 期望
+    init.output      = bsd_wlan_output;
+    init.demux       = ether_demux;
+    init.add_proto   = ether_add_proto;
+    init.del_proto   = ether_del_proto;
+    init.check_multi = ether_check_multi;
+    init.ioctl       = bsd_wlan_ioctl;
+    init.softc       = self;
+
+    static const u_int8_t bcast[6] = {0xff,0xff,0xff,0xff,0xff,0xff};
+    init.broadcast_addr = bcast;
+    init.broadcast_len  = 6;
+
+    errno_t r = ifnet_allocate(&init, &gBsdWlanIfnet);
+    if (r != 0) {
+        XYLog("Path B: ifnet_allocate err=%d\n", r);
+        return false;
+    }
+
+    ifnet_set_lladdr(gBsdWlanIfnet, mac, 6);
+    ifnet_set_mtu(gBsdWlanIfnet, 1500);
+    ifnet_set_flags(gBsdWlanIfnet,
+                    IFF_BROADCAST | IFF_MULTICAST | IFF_SIMPLEX,
+                    0xffff);
+
+    struct sockaddr_dl ll_addr = {};
+    ll_addr.sdl_len    = sizeof(ll_addr);
+    ll_addr.sdl_family = AF_LINK;
+    ll_addr.sdl_type   = IFT_IEEE80211;
+    ll_addr.sdl_alen   = 6;
+    memcpy(LLADDR(&ll_addr), mac, 6);
+
+    r = ifnet_attach(gBsdWlanIfnet, &ll_addr);
+    if (r != 0) {
+        XYLog("Path B: ifnet_attach err=%d\n", r);
+        ifnet_release(gBsdWlanIfnet);
+        gBsdWlanIfnet = NULL;
+        return false;
+    }
+
+    XYLog("Path B: BSD wifi ifnet attached ok (IFT_IEEE80211)\n");
+    return true;
 }
 #endif
 
@@ -742,6 +855,28 @@ bool AirportItlwm::start(IOService *provider)
         fHalService->get80211Controller()->ic_flags |= IEEE80211_F_AUTO_JOIN;
     TRACE_STEP("21_pre_registerService");
     registerService();
+
+#if __IO80211_TARGET >= __MAC_15_0
+    // Path B Phase 1: 在所有其他 setup 完成后, attach 我们自己的 BSD wifi ifnet.
+    // H4 跳过 fNetIf->attach 已经避免 IO80211Family panic, 但 airportd 看不到我们.
+    // 这个 BSD KPI ifnet (type=IFT_IEEE80211, ioctl 返 IFM_IEEE80211) 让 airportd
+    // 通过 getifaddrs+SIOCGIFMEDIA 主路径接受我们.
+    {
+        TRACE_STEP("22a_pre_createBsdWlanIfnet");
+        u_int8_t mac[6];
+        if (fHalService && fHalService->getDriverInfo()) {
+            memcpy(mac, fHalService->getDriverInfo()->getEthAddress(), 6);
+        } else {
+            memset(mac, 0, 6);
+        }
+        if (createBsdWlanIfnet(this, mac)) {
+            TRACE_STEP("22b_post_createBsdWlanIfnet_OK");
+        } else {
+            TRACE_STEP("22b_FAIL_createBsdWlanIfnet");
+        }
+    }
+#endif
+
     TRACE_STEP("22_DONE");
     return true;
 }
