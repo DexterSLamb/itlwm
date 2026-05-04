@@ -30,13 +30,95 @@ extern "C" {
 #define IFT_IEEE80211 0x47    /* 71 */
 #endif
 
-// Apple 私有 KPI: 这些 symbol 在 kernel /System/Library/Kernels/kernel exports 表里
-// (nm 验证: T _ifnet_set_lladdr_and_type, T _ifnet_set_eflags), 但不在 user-facing
-// SDK header. Apple 自家 IO80211Family kext 用它. 我们 extern "C" declare,
-// kxld 链接时去 kernel 找 symbol. 如果 link fail → kext load 失败 (明确 error).
+// Apple 私有 KPI 来自 xnu/bsd/net/kpi_interface.h (xnu-11417.140.69 source).
+// SDK header 没暴露 ifnet_allocate_extended, 但 kernel binary 有 export
+// (nm 验证: T _ifnet_allocate_extended). extern "C" declare + kxld load 时
+// 链接 kernel symbol. Apple 自家 dext / kext 都通过这条路设 subfamily.
+//
+// __getIfListCopy acceptance criteria (反编译 IO80211.framework 验证):
+//   ioctl(SIOCGIFTYPE) 返 0 + ifr.type == IFT_ETHER (6) + sub at +24 == 3 → accept
+//   OR ioctl(SIOCGIFMEDIA) 返 0 + (ifm_current & 0xe0) == 0x80 → accept
+// 我们走第一条 — 设 type=IFT_ETHER + subfamily=IFNET_SUBFAMILY_WIFI(3).
+
+typedef u_int32_t ifnet_subfamily_t;
+typedef u_int32_t ifnet_family_t;
+typedef errno_t (*ifnet_pre_enqueue_func)(ifnet_t, mbuf_t);
+typedef errno_t (*ifnet_start_func)(ifnet_t);
+typedef errno_t (*ifnet_ctl_func)(ifnet_t, int, void *);
+typedef errno_t (*ifnet_input_poll_func)(ifnet_t, u_int32_t, u_int32_t,
+                                          mbuf_t *, mbuf_t *, u_int32_t *,
+                                          u_int32_t *);
+typedef errno_t (*ifnet_framer_extended_func)(ifnet_t, mbuf_t *,
+                                               const struct sockaddr *,
+                                               const char *, const char *,
+                                               u_int32_t *, u_int32_t *);
+typedef void (*ifnet_free_func)(ifnet_t);
+
+#define IFNET_INIT_VERSION_2     2
+#define IFNET_INIT_LEGACY        0x1
+#define IFNET_SUBFAMILY_WIFI     3
+#define IFNET_FAMILY_ETHERNET_2  2
+
+// xnu/bsd/net/kpi_interface.h struct ifnet_init_eparams (xnu-11417.140.69)
+// 字段顺序必须严格匹配, 大小必须 ≥ 0x158 (344 bytes; kernel checks).
+struct macos_ifnet_init_eparams {
+    u_int32_t ver;
+    u_int32_t len;
+    u_int32_t flags;
+    /* uniqueid_len 紧贴 uniqueid 之前还是之后? xnu source: name 在 unit 之前 */
+    const void *uniqueid;
+    u_int32_t uniqueid_len;
+    const char *name;
+    u_int32_t unit;
+    ifnet_family_t family;
+    u_int32_t type;
+    u_int32_t sndq_maxlen;
+    ifnet_output_func output;
+    ifnet_pre_enqueue_func pre_enqueue;
+    ifnet_start_func start;
+    ifnet_ctl_func output_ctl;
+    u_int32_t output_sched_model;
+    u_int32_t output_target_qdelay;
+    u_int64_t output_bw;
+    u_int64_t output_bw_max;
+    u_int64_t output_lt;
+    u_int64_t output_lt_max;
+    u_int16_t start_delay_qlen;
+    u_int16_t start_delay_timeout;
+    u_int32_t _reserved_p[3];
+    ifnet_input_poll_func input_poll;
+    ifnet_ctl_func input_ctl;
+    u_int32_t rcvq_maxlen;
+    u_int32_t __reserved_p;
+    u_int64_t input_bw;
+    u_int64_t input_bw_max;
+    u_int64_t input_lt;
+    u_int64_t input_lt_max;
+    u_int64_t ___reserved_p[2];
+    ifnet_demux_func demux;
+    ifnet_add_proto_func add_proto;
+    ifnet_del_proto_func del_proto;
+    ifnet_check_multi check_multi;
+    ifnet_framer_func framer;
+    void *softc;
+    ifnet_ioctl_func ioctl;
+    ifnet_set_bpf_tap set_bpf_tap;
+    ifnet_detached_func detach;
+    ifnet_event_func event;
+    const void *broadcast_addr;
+    u_int32_t broadcast_len;
+    ifnet_framer_extended_func framer_extended;
+    ifnet_subfamily_t subfamily;
+    u_int16_t tx_headroom;
+    u_int16_t tx_trailer;
+    u_int32_t rx_mit_ival;
+    u_int32_t ____reserved_p;
+    ifnet_free_func free_func;
+};
+
 extern "C" {
-errno_t ifnet_set_lladdr_and_type(ifnet_t interface, const void *lladdr,
-                                   size_t lladdr_len, u_char new_type);
+errno_t ifnet_allocate_extended(const struct macos_ifnet_init_eparams *init,
+                                 ifnet_t *interface);
 }
 #endif
 
@@ -183,15 +265,22 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
 }
 
 // Phase 1: 创建并 attach 我们自己的 BSD wifi ifnet.
-// 在 driver start 末尾调 (H4 stable 之后).
+// 用 ifnet_allocate_extended (私有 KPI) + ifnet_init_eparams 设 subfamily=WIFI(3),
+// 让 _getIfListCopy 主路径接受 (type=IFT_ETHER + sub=WIFI).
 static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
     if (gBsdWlanIfnet) return true;
 
-    struct ifnet_init_params init = {};
-    init.name        = "en";   // BSD assign next available unit
-    init.unit        = 99;     // hint; BSD may reassign
-    init.family      = IFNET_FAMILY_ETHERNET;  // 没 _IEEE80211 family, 借 ETHERNET
-    init.type        = IFT_IEEE80211;          // 71 — airportd 期望
+    static const u_int8_t bcast[6] = {0xff,0xff,0xff,0xff,0xff,0xff};
+
+    struct macos_ifnet_init_eparams init = {};
+    init.ver         = IFNET_INIT_VERSION_2;
+    init.len         = sizeof(struct macos_ifnet_init_eparams);
+    init.flags       = IFNET_INIT_LEGACY;       // 我们用 output callback 不是 start
+    init.name        = "en";
+    init.unit        = 99;
+    init.family      = IFNET_FAMILY_ETHERNET_2; // 2
+    init.type        = IFT_ETHER;               // 6 — airportd main path 期望
+    init.subfamily   = IFNET_SUBFAMILY_WIFI;    // 3 — 让 ifnet_subfamily() 返 WIFI
     init.output      = bsd_wlan_output;
     init.demux       = ether_demux;
     init.add_proto   = ether_add_proto;
@@ -199,28 +288,17 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
     init.check_multi = ether_check_multi;
     init.ioctl       = bsd_wlan_ioctl;
     init.softc       = self;
-
-    static const u_int8_t bcast[6] = {0xff,0xff,0xff,0xff,0xff,0xff};
     init.broadcast_addr = bcast;
     init.broadcast_len  = 6;
 
-    errno_t r = ifnet_allocate(&init, &gBsdWlanIfnet);
+    errno_t r = ifnet_allocate_extended(&init, &gBsdWlanIfnet);
     if (r != 0) {
-        XYLog("Path B: ifnet_allocate err=%d\n", r);
+        XYLog("Path B: ifnet_allocate_extended err=%d (link fail?)\n", r);
         return false;
     }
+    XYLog("Path B: ifnet_allocate_extended OK type=IFT_ETHER subfamily=WIFI\n");
 
-    // 用私有 KPI ifnet_set_lladdr_and_type 替代 ifnet_set_lladdr,
-    // 一并设 ifa_type=IFT_IEEE80211 (71). 这影响 0xC020699F 这种 kernel
-    // internal ioctl 读 ifnet 的 type 字段.
-    errno_t r2 = ifnet_set_lladdr_and_type(gBsdWlanIfnet, mac, 6, IFT_IEEE80211);
-    if (r2 != 0) {
-        XYLog("Path B: ifnet_set_lladdr_and_type err=%d (private KPI link fail?)\n", r2);
-        // fallback: at least set lladdr
-        ifnet_set_lladdr(gBsdWlanIfnet, mac, 6);
-    } else {
-        XYLog("Path B: lladdr_and_type set OK (type=IFT_IEEE80211)\n");
-    }
+    ifnet_set_lladdr(gBsdWlanIfnet, mac, 6);
     ifnet_set_mtu(gBsdWlanIfnet, 1500);
     // 设 IFF_UP | IFF_RUNNING — airportd._getIfListCopy 可能 require interface
     // up/running 才 enumerate. flags 8802 (没 UP) 时 airportd reject.
