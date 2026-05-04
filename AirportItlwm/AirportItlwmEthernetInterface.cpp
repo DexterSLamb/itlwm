@@ -8,8 +8,8 @@
 
 #include "AirportItlwmEthernetInterface.hpp"
 #if __IO80211_TARGET >= __MAC_15_0
-// AirportItlwm declares getWorkQueue() and apple80211Request() used by
-// the Sequoia path's runAction dispatch and ioctl handler.
+// AirportItlwm declares getWorkQueue() used by the Sequoia
+// prepareBSDInterfaceGated workqueue dispatch.
 #include "AirportItlwmV2.hpp"
 #endif
 
@@ -100,46 +100,25 @@ prepareBSDInterfaceGated(OSObject *target, void *interfaceArg,
     return kIOReturnSuccess;
 }
 
-// Sequoia: short-circuit broken Apple BSD performCommand chain BUT
-// allow apple80211 ioctls through to our existing handler so airportd
-// can talk to us as WiFi hardware.
+// Sequoia: short-circuit broken Apple BSD performCommand chain.
 //
 // Apple's IOEthernetInterface::performCommand on Sequoia is zombie
 // code — its executeCommand → executeCommandAction → packet[+0x10]
 // dispatch ends up calling IO80211InfraProtocol::gMetaClass (a DATA
 // address) causing Kernel NX panic.
 //
-// We handle two ioctl families ourselves:
-//   - SIOCSA80211 / SIOCGA80211: apple80211 ioctls used by airportd
-//     (associate, scan, get RSSI, set channel, ~50+ subtypes). Our
-//     existing AirportSTAIOCTL.cpp handler processes these via
-//     AirportItlwm::apple80211Request.
-//   - Everything else (BSD generic SIOCxxx like SIOCSIFFLAGS, address
-//     setting, etc.): return Unsupported. ifconfig direct manipulation
-//     won't work but airportd-driven WiFi connection will.
+// On Sequoia, apple80211 ioctls (SIOCSA80211/SIOCGA80211) handler
+// plumbing is #if'd out in V2 (apple80211_ioctl, apple80211SkywalkRequest,
+// apple80211Request all live in #if __IO80211_TARGET < __MAC_15_0
+// guards) because Apple moved airportd↔driver communication off BSD
+// ioctl entirely in Sequoia (uses Skywalk channels via IO80211InfraInterface).
+//
+// So returning Unsupported for all cmds keeps the driver loaded
+// without panic. airportd will use Skywalk path — that's where the
+// next investigation goes.
 SInt32 AirportItlwmEthernetInterface::
-performCommand(IONetworkController *controller, unsigned long cmd,
-               void *arg0, void *arg1)
+performCommand(IONetworkController *, unsigned long, void *, void *)
 {
-    if (cmd == SIOCSA80211 || cmd == SIOCGA80211) {
-        // arg0 is struct apple80211req* (BSD ioctl convention)
-        struct apple80211req *req = static_cast<struct apple80211req *>(arg0);
-        if (!req) {
-            return kIOReturnBadArgument;
-        }
-        AirportItlwm *ctrl = OSDynamicCast(AirportItlwm, controller);
-        if (!ctrl) {
-            return kIOReturnBadArgument;
-        }
-        // apple80211Request is the existing handler in AirportSTAIOCTL.cpp
-        // (Sonoma path used a different invocation but the handler itself
-        // is OS-version-agnostic; processes ~50 SIOC apple80211 subtypes).
-        return ctrl->apple80211Request(static_cast<unsigned int>(cmd),
-                                       req->req_type,
-                                       /*IO80211Interface* */ nullptr,
-                                       req);
-    }
-    // Generic BSD ioctl path is broken on Sequoia; reject.
     return kIOReturnUnsupported;
 }
 #endif
