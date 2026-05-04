@@ -323,6 +323,32 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
     }
 
     XYLog("Path B: BSD wifi ifnet attached ok (IFT_IEEE80211)\n");
+
+    // Phase 1.5: 建一个 stub IOService 让 Apple80211FindService("en99") 找得到.
+    // 反编译 IO80211.framework _isInfraInterface (Sequoia 15.7.5) 显示:
+    //   1. _Apple80211FindService(name) 用 IOServiceGetMatchingService
+    //      matching = {IOPropertyMatch: {IOInterfaceName: <name>}}
+    //   2. 在返回的 IOService 上读 CFString property "IO80211InterfaceRole"
+    //   3. CFStringCompare 与 "Infrastructure" — 相等才 accept 进 ifList
+    //
+    // en99 是纯 BSD ifnet 没 IOKit binding, 所以 FindService 返 0 → reject.
+    // 挂个 IOService stub child 上来, 带这两个 property 即可命中.
+    IOService *stub = OSTypeAlloc(IOService);
+    if (stub) {
+        if (stub->init() && stub->attach(self)) {
+            char ifname[16];
+            snprintf(ifname, sizeof(ifname), "%s%d",
+                     ifnet_name(gBsdWlanIfnet), ifnet_unit(gBsdWlanIfnet));
+            stub->setProperty("IOInterfaceName", ifname);
+            stub->setProperty("IO80211InterfaceRole", "Infrastructure");
+            stub->registerService();
+            XYLog("Path B: stub IOService for %s registered (Role=Infrastructure)\n", ifname);
+        } else {
+            stub->release();
+            XYLog("Path B: stub IOService init/attach failed\n");
+        }
+    }
+
     return true;
 }
 #endif
