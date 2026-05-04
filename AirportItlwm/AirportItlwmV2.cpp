@@ -261,10 +261,17 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
     // Phase 2: 自实 inline apple80211 ioctl handler — V2 class 没 apple80211Request
     // member (AirportSTAIOCTL.cpp 不在 Sequoia15 target). 先 implement CARD_CAPABILITIES
     // 让 BindToInterfaceWithIOCTL 过, 后续 req_type 按 airportd log 迭代加.
-    if (cmd == (unsigned long)SIOCSA80211 || cmd == (unsigned long)SIOCGA80211) {
+    //
+    // 注意: 不能用 SIOCSA80211/SIOCGA80211 macro — fork apple80211_ioctl.h 抄旧
+    // 版本 hardcoded 值 (0x80306{9C8,C9} 暗示 48-byte struct), 但 Sequoia 15.7.5
+    // kernel 实际发的是 0xc02869{c8,c9} (40-byte struct, modern 64-bit layout).
+    // dmesg 实测: cmd=0xc02869c9 命中 unhandled. 用字面量绕过 macro bug.
+    static const unsigned long REAL_SIOCSA80211 = 0xc02869c8UL;
+    static const unsigned long REAL_SIOCGA80211 = 0xc02869c9UL;
+    if (cmd == REAL_SIOCSA80211 || cmd == REAL_SIOCGA80211) {
         struct apple80211req *req = (struct apple80211req *)arg;
         if (req->req_len > 65536) return EINVAL;
-        bool is_get = (cmd == (unsigned long)SIOCGA80211);
+        bool is_get = (cmd == REAL_SIOCGA80211);
 
         size_t klen = req->req_len;
         void *kbuf = NULL;
