@@ -112,26 +112,44 @@ static errno_t bsd_wlan_output(ifnet_t ifp, mbuf_t packet) {
     return 0;
 }
 
+// macOS 真实 ifmediareq layout (跟 macOS user-space SDK <net/if.h> 一致):
+//   #pragma pack(4); struct { char[16]; int*5; int*; }; total 44 bytes
+// 不要用 fork 的 OpenBSD ifmediareq (64 bytes uint64 字段), 那个 layout 跟实际
+// macOS kernel buffer 不匹配, 会写超 caller buffer + 字段 offset 错位.
+struct __attribute__((packed)) macos_ifmediareq {
+    char  ifm_name[16];       // 0..15
+    int   ifm_current;        // 16..19
+    int   ifm_mask;           // 20..23
+    int   ifm_status;         // 24..27
+    int   ifm_active;         // 28..31
+    int   ifm_count;          // 32..35
+    int  *ifm_ulist;          // 36..43 (packed 4-align ptr)
+};
+static_assert(sizeof(macos_ifmediareq) == 44, "macos_ifmediareq must be 44 bytes");
+
+// macOS kernel real SIOCGIFMEDIA = _IOWR('i', 56, sizeof(macos_ifmediareq=44))
+//   IOC_INOUT(0xC0000000) | (44<<16=0x002C0000) | (105<<8=0x6900) | 56(0x38)
+//   = 0xC02C6938
+#define MACOS_SIOCGIFMEDIA 0xC02C6938UL
+
 // IOCTL handler: Phase 1 minimal — 只处理 SIOCGIFMEDIA 让 airportd 接受我们,
 // apple80211 ioctl SIOCSA80211/SIOCGA80211 在 Phase 2 再 dispatch.
 static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
     (void)ifp;
-    // Phase 1 debug: log cmd entry + SIOCGIFMEDIA macro 展开值供对比
-    XYLog("PathB bsd_wlan_ioctl cmd=0x%lx (SIOCGIFMEDIA macro=0x%lx)\n",
-          cmd, (unsigned long)SIOCGIFMEDIA);
+    XYLog("PathB bsd_wlan_ioctl cmd=0x%lx\n", cmd);
 
-    // Use direct numeric comparison instead of switch case; 之前 switch 没 match
-    // SIOCGIFMEDIA, 怀疑 case label 类型 promotion 异常.
-    if (cmd == (unsigned long)SIOCGIFMEDIA || cmd == 0xC02C6938UL) {
-        struct ifmediareq *ifmr = (struct ifmediareq *)arg;
-        XYLog("PathB GIFMEDIA hit: pre current=0x%x active=0x%x\n",
-              ifmr->ifm_current, ifmr->ifm_active);
-        ifmr->ifm_current = IFM_IEEE80211 | IFM_AUTO;
+    if (cmd == MACOS_SIOCGIFMEDIA) {
+        // 用 macos_ifmediareq layout (44 bytes packed) 写, 不要用 OpenBSD 64-byte 版本.
+        struct macos_ifmediareq *ifmr = (struct macos_ifmediareq *)arg;
+        XYLog("PathB GIFMEDIA pre: current=0x%x active=0x%x count=%d\n",
+              ifmr->ifm_current, ifmr->ifm_active, ifmr->ifm_count);
+        ifmr->ifm_current = IFM_IEEE80211 | IFM_AUTO;  // 0x80
         ifmr->ifm_active  = IFM_IEEE80211 | IFM_AUTO;
         ifmr->ifm_mask    = 0;
         ifmr->ifm_status  = IFM_AVALID | IFM_ACTIVE;
         ifmr->ifm_count   = 0;
-        XYLog("PathB GIFMEDIA hit: post current=0x%x\n", ifmr->ifm_current);
+        XYLog("PathB GIFMEDIA post: current=0x%x active=0x%x\n",
+              ifmr->ifm_current, ifmr->ifm_active);
         return 0;
     }
     if (cmd == (unsigned long)SIOCSA80211 || cmd == (unsigned long)SIOCGA80211) {
