@@ -652,16 +652,11 @@ eventHandler(struct ieee80211com *ic, int msgCode, void *data)
             interface->postMessage(APPLE80211_M_COUNTRY_CODE_CHANGED, NULL, 0, 0);
             break;
         case IEEE80211_EVT_STA_ASSOC_DONE:
+            // NOTE: iwm firmware does AUTH/ASSOC internally (MAC_CTXT_CMD path).
+            // ieee80211_recv_assoc_resp NEVER runs for iwm hardware, so this
+            // event never fires here. Link-up propagation to bsdInterface is
+            // done in watchdogAction (Phase D5) by polling ic_state.
             interface->postMessage(APPLE80211_M_ASSOC_DONE, NULL, 0, 0);
-            // Phase D4: tell BSD ifnet (bsdInterface = en3) link is active.
-            // In the normal Apple-framework-driven flow, airportd/IO80211Family
-            // calls setLinkStatus(active) when it observes ic_state==RUN, which
-            // marks en3 IFF_RUNNING and lets DHCP/socket traffic flow. Phase C
-            // (boot-time hardcoded auto-join) bypasses that flow, so we wire
-            // the link-up notification here directly. eventHandler runs on the
-            // HAL workloop (called from iwm_newstate_task), so the eventual
-            // setLinkStateGated runAction is properly serialized.
-            that->setLinkStatus(kIONetworkLinkActive | kIONetworkLinkValid);
             break;
         case IEEE80211_EVT_STA_DEAUTH:
             interface->postMessage(APPLE80211_M_DEAUTH_RECEIVED, NULL, 0, 0);
@@ -676,6 +671,23 @@ void AirportItlwm::watchdogAction(IOTimerEventSource *timer)
     struct _ifnet *ifp = &fHalService->get80211Controller()->ic_ac.ac_if;
     (*ifp->if_watchdog)(ifp);
     updateLQMIfChanged();
+
+    // Phase D5: poll ic_state, propagate link-up to BSD ifnet.
+    // iwm uses firmware MLME so ieee80211_recv_assoc_resp (which would fire
+    // EVT_STA_ASSOC_DONE) never runs — we cannot rely on event_handler.
+    // Instead poll here every 1s. setLinkStatus is idempotent against last
+    // status (super::setLinkStatus skips if unchanged), so no spam.
+    // Runs on HAL workloop (timerEventSource action), so the cascading
+    // setLinkStateGated runAction is correctly serialized.
+    {
+        int s = fHalService->get80211Controller()->ic_state;
+        bool isRun = (s == IEEE80211_S_RUN);
+        UInt32 want = isRun
+            ? (kIONetworkLinkActive | kIONetworkLinkValid)
+            : kIONetworkLinkValid;
+        setLinkStatus(want);
+    }
+
     watchdogTimer->setTimeoutMS(kWatchDogTimerPeriod);
 }
 
