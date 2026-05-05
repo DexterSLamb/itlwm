@@ -491,27 +491,9 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
     // 回滚 v1: stub = bare IOService. commonStart 第一 cast 必 fail, 但至少
     // 恢复 en99 + airportd 把 en99 当 wifi 接口用 (通过 BSD ioctl GET 路径).
     // commonStart 完整 IS-A IO80211SkywalkInterface 路径需要更深 RE / 不同方案.
-    IOService *stub = OSTypeAlloc(IOService);
-    XYLog("Path B: OSTypeAlloc(IOService) → %p\n", stub);
-    if (stub) {
-        bool initOK = stub->init();
-        bool attachOK = initOK && stub->attach(self);
-        XYLog("Path B: stub init=%d attach=%d\n", initOK, attachOK);
-        if (initOK && attachOK) {
-            char ifname[16];
-            snprintf(ifname, sizeof(ifname), "%s%d",
-                     ifnet_name(gBsdWlanIfnet), ifnet_unit(gBsdWlanIfnet));
-            stub->setProperty("IOInterfaceName", ifname);
-            stub->setProperty("IO80211InterfaceRole", "Infrastructure");
-            stub->setProperty("IOUserClientClass", "IO80211APIUserClient");
-            stub->registerService();
-            XYLog("Path B: stub IOService for %s registered (Role=Infrastructure)\n", ifname);
-        } else {
-            stub->release();
-            XYLog("Path B: stub IOService init/attach failed\n");
-        }
-    }
-
+    // Plan A 路径: properties 已 publish 在 fNetIf (start() 里, line 1023+).
+    // 不再创 stub IOService — 双 service 同 IOInterfaceName=en99 让 FindService
+    // 二选一不可控, airportd 可能选裸 IOService 导致 commonStart cast fail.
     return true;
 }
 #endif
