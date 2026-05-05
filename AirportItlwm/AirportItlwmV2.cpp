@@ -1008,25 +1008,25 @@ bool AirportItlwm::start(IOService *provider)
     }
 #endif
     TRACE_STEP("14_post_initCCLogs");
-#if __IO80211_TARGET >= __MAC_15_0
-    // H4 实验: 不让 fNetIf attach 到 IOService 树, framework 找不到我们 SkywalkInterface
-    // → configd apple80211 ioctl 拿不到接口 → 不调 static getCARD_CAPABILITIES → 不 panic.
-    //
-    // H1 (skip setInterfaceRole) + H2 (driver getCARD_CAPABILITIES 返 Unsupported)
-    // 都不消除 panic, 说明 corrupt 在 framework dispatch chain 早期, 不是 driver 写入.
-    // 跳过整个 fNetIf 暴露能验证: panic 是否依赖于 framework 找到我们.
-    //
-    // 副作用: 完全没 WiFi (本来也没). driver 只剩 controller 注册, 接口完全 invisible.
-    // 这是 panic source 隔离实验, 不是 fix.
-    TRACE_STEP("14b_skip_fNetIf_attach_H4");
-#else
-    if (!fNetIf->attach(this)) {
-        TRACE_STEP("FAIL_skywalkAttach");
-        XYLog("attach to service fail\n");
+    // Plan A v2: re-enable fNetIf->attach. 之前 silent fail (kext loaded
+     // 但 AirportItlwm IOService 没出现), 加细粒度 TRACE_STEP 用 ioreg -k
+    // airportitlwm_trace 后看最后一步.
+    TRACE_STEP("14b_pre_fNetIf_attach");
+    bool _attachOK = fNetIf->attach(this);
+    TRACE_STEP(_attachOK ? "14c_fNetIf_attach_OK" : "14c_FAIL_fNetIf_attach");
+    if (!_attachOK) {
+        XYLog("Plan A: fNetIf->attach failed\n");
         super::stop(provider);
         releaseAll();
         return false;
     }
+#if __IO80211_TARGET >= __MAC_15_0
+    TRACE_STEP("14d_pre_fNetIf_setProps");
+    fNetIf->setProperty("IOInterfaceName", "en99");
+    fNetIf->setProperty("IO80211InterfaceRole", "Infrastructure");
+    fNetIf->setProperty("IOUserClientClass", "IO80211APIUserClient");
+    XYLog("Plan A: fNetIf published en99/Infrastructure/IO80211APIUserClient\n");
+    TRACE_STEP("14e_post_fNetIf_setProps");
 #endif
     TRACE_STEP("15_post_skywalkAttach");
     if (!attachInterface(fNetIf, this)) {
