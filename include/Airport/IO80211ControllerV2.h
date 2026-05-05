@@ -352,17 +352,15 @@ public:
     // has SOMETHING at this slot; the slot index is what matters for OC's
     // vtable patcher to bind correctly to the parent vtable layout.
     virtual void *_seq_pad_slot405() { return nullptr; }                                              // slot 405 [PV padding]
+    // PADDING +2 — binary 实测 (717c585) getCARD_CAPABILITIES 落 slot 408 (off by -2),
+    // 表明 parent chain (MacKernelSDK IOEthernetController/IONetworkController/etc.)
+    // 比 Apple 真 binary 少 2 个 virtual. 加 2 padding 把后面所有 slot 推 +2 对齐.
+    virtual void *_seq_pad_slot405a() { return nullptr; }
+    virtual void *_seq_pad_slot405b() { return nullptr; }
     virtual UInt32 hardwareOutputQueueDepth();                                      // slot 406
     virtual SInt32 performCountryCodeOperation(IO80211CountryCodeOp);               // slot 407
     virtual void dataLinkLayerAttachComplete();                                     // slot 408
     virtual SInt32 enableFeature(IO80211FeatureCode, void*);                        // slot 409 [concrete in 15.7.5]
-    // FOCUSED EXPERIMENT: swap slot 410/413 — RE 实证 apple80211getCARD_CAPABILITIES
-    // wrapper (KDK 15.7.4 IO80211Family.kext @0xe6d76 chain) 的 controller fallback
-    // 走 ctlr->vtable[0xcd0/8 = 410] 调 (intf, buf), 即 slot 410 = getCARD_CAPABILITIES.
-    // 之前 isCommandProhibited 占 slot 410 + Apple 框架 callq → 我们 1-arg method 用
-    // 错 ABI → stack canary corruption panic (Sonoma 14 reload 后实测).
-    // 把 getCARD_CAPABILITIES 提前到 slot 410, isCommandProhibited 后移到 slot 413.
-    // 其他 7 个 PV (411-417) 保持 best-guess 顺序, 后面 RE 各 wrapper 再精修.
     virtual IOReturn getCARD_CAPABILITIES(IO80211SkywalkInterface *,apple80211_capability_data *) = 0;// 410 [PV] ← was 413
     virtual IOReturn getDRIVER_VERSION(IO80211SkywalkInterface *,apple80211_version_data *) = 0;     // 411 [PV]
     virtual IOReturn getHARDWARE_VERSION(IO80211SkywalkInterface *,apple80211_version_data *) = 0;   // 412 [PV]
