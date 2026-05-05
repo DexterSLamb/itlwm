@@ -504,17 +504,18 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
     XYLog("Path A v5: new AirportItlwmSkywalkInterface stub → %p\n", stub);
     if (stub) {
         bool initOK = stub->init();
-        bool attachOK = initOK && stub->attach(self);
-        XYLog("Path A v5: stub init=%d attach=%d\n", initOK, attachOK);
-        if (initOK && attachOK) {
+        bool bindOK = initOK && stub->bindController(self);
+        bool attachOK = bindOK && stub->attach(self);
+        XYLog("Path A v5: stub init=%d bind=%d attach=%d\n", initOK, bindOK, attachOK);
+        if (initOK && bindOK && attachOK) {
             stub->setProperty("IOInterfaceName", "en99");
             stub->setProperty("IO80211InterfaceRole", "Infrastructure");
             stub->setProperty("IOUserClientClass", "IO80211APIUserClient");
             stub->registerService();
-            XYLog("Path A v5: stub registered (IOInterfaceName=en99)\n");
+            XYLog("Path A v5: stub registered (IOInterfaceName=en99) bound to controller\n");
         } else {
             stub->release();
-            XYLog("Path A v5: stub init/attach failed\n");
+            XYLog("Path A v5: stub init/bind/attach failed\n");
         }
     }
     return true;
