@@ -335,16 +335,16 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
             else if (self && !is_get && klen >= sizeof(apple80211_power_data))
                 r = self->setPOWER((OSObject *)NULL, (apple80211_power_data *)kbuf);
             break;
-        case 20: // ASSOCIATE — set, on SkywalkInterface + add_ess + kick state
+        case 20: // ASSOCIATE — emulate joinSSID: add_ess + AUTO_JOIN only
+            // PHASE 3.7-safer: do NOT call iface->setASSOCIATE(ad). Two panics
+            // confirmed it deref's NULL+0x80 in IO80211Family when invoked from
+            // BSD ioctl thread (race with HAL workloop scan loop). itlwm v1's
+            // joinSSID (itlwm.cpp:169) doesn't call associateSSID either — just
+            // add_ess + AUTO_JOIN flag, then driver's scan loop self-picks.
             if (iface && !is_get && klen >= sizeof(apple80211_assoc_data)) {
                 struct apple80211_assoc_data *ad =
                     (struct apple80211_assoc_data *)kbuf;
-                r = iface->setASSOCIATE(ad);
-                // setASSOCIATE only sets ic_des_essid + ic_psk. To trigger
-                // ieee80211_switch_ess on next scan completion (which actually
-                // joins) the ESS must be in ic->ic_ess. itlwm v1 does this in
-                // joinSSID (itlwm.cpp:169-205) via ieee80211_add_ess + AUTO_JOIN.
-                // Replicate here so direct-ioctl associate works without airportd.
+                r = kIOReturnSuccess;
                 struct ieee80211com *ic =
                     self->fHalService ? self->fHalService->get80211Controller() : NULL;
                 if (ic && ad->ad_ssid_len > 0 && ad->ad_key.key_len == 32) {
