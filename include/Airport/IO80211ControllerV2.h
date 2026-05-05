@@ -356,17 +356,17 @@ public:
     virtual SInt32 performCountryCodeOperation(IO80211CountryCodeOp);               // slot 407
     virtual void dataLinkLayerAttachComplete();                                     // slot 408
     virtual SInt32 enableFeature(IO80211FeatureCode, void*);                        // slot 409 [concrete in 15.7.5]
-    virtual bool isCommandProhibited(int) = 0;                                      // slot 410 [PV]
-    // slots 411-417: 7 PVs. Best mapping based on 14.4 layout (slots 415-422
-    // were 8 IOCTL hooks: getDRIVER_VERSION..setGET_DEBUG_INFO). In 15.7.5 the
-    // setGET_DEBUG_INFO entry was removed and getPLATFORM_CONFIG (concrete)
-    // was inserted at the end (slot 418), shifting the IOCTL PVs up by 4 to
-    // slots 411-417. The exact mapping matters for binary compat with drivers,
-    // but since AirportItlwm is the only driver here, we just need the correct
-    // PV count and slot positions — semantic mapping is best-effort.
+    // FOCUSED EXPERIMENT: swap slot 410/413 — RE 实证 apple80211getCARD_CAPABILITIES
+    // wrapper (KDK 15.7.4 IO80211Family.kext @0xe6d76 chain) 的 controller fallback
+    // 走 ctlr->vtable[0xcd0/8 = 410] 调 (intf, buf), 即 slot 410 = getCARD_CAPABILITIES.
+    // 之前 isCommandProhibited 占 slot 410 + Apple 框架 callq → 我们 1-arg method 用
+    // 错 ABI → stack canary corruption panic (Sonoma 14 reload 后实测).
+    // 把 getCARD_CAPABILITIES 提前到 slot 410, isCommandProhibited 后移到 slot 413.
+    // 其他 7 个 PV (411-417) 保持 best-guess 顺序, 后面 RE 各 wrapper 再精修.
+    virtual IOReturn getCARD_CAPABILITIES(IO80211SkywalkInterface *,apple80211_capability_data *) = 0;// 410 [PV] ← was 413
     virtual IOReturn getDRIVER_VERSION(IO80211SkywalkInterface *,apple80211_version_data *) = 0;     // 411 [PV]
     virtual IOReturn getHARDWARE_VERSION(IO80211SkywalkInterface *,apple80211_version_data *) = 0;   // 412 [PV]
-    virtual IOReturn getCARD_CAPABILITIES(IO80211SkywalkInterface *,apple80211_capability_data *) = 0;// 413 [PV]
+    virtual bool isCommandProhibited(int) = 0;                                                       // 413 [PV] ← was 410
     virtual IOReturn getPOWER(IO80211SkywalkInterface *,apple80211_power_data *) = 0;                // 414 [PV]
     virtual IOReturn setPOWER(IO80211SkywalkInterface *,apple80211_power_data *) = 0;                // 415 [PV]
     virtual IOReturn getCOUNTRY_CODE(IO80211SkywalkInterface *,apple80211_country_code_data *) = 0;  // 416 [PV]
