@@ -12,6 +12,8 @@
 #include <crypto/sha1.h>
 #include <net80211/ieee80211_priv.h>
 #include <net80211/ieee80211_var.h>
+#include <net80211/ieee80211_ioctl.h>
+#include <net80211/ieee80211_proto.h>
 
 #include "AirportItlwmSkywalkInterface.hpp"
 #include "IOPCIEDeviceWrapper.hpp"
@@ -332,6 +334,46 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
                 r = self->getPOWER((OSObject *)NULL, (apple80211_power_data *)kbuf);
             else if (self && !is_get && klen >= sizeof(apple80211_power_data))
                 r = self->setPOWER((OSObject *)NULL, (apple80211_power_data *)kbuf);
+            break;
+        case 20: // ASSOCIATE — set, on SkywalkInterface + add_ess + kick state
+            if (iface && !is_get && klen >= sizeof(apple80211_assoc_data)) {
+                struct apple80211_assoc_data *ad =
+                    (struct apple80211_assoc_data *)kbuf;
+                r = iface->setASSOCIATE(ad);
+                // setASSOCIATE only sets ic_des_essid + ic_psk. To trigger
+                // ieee80211_switch_ess on next scan completion (which actually
+                // joins) the ESS must be in ic->ic_ess. itlwm v1 does this in
+                // joinSSID (itlwm.cpp:169-205) via ieee80211_add_ess + AUTO_JOIN.
+                // Replicate here so direct-ioctl associate works without airportd.
+                struct ieee80211com *ic =
+                    self->fHalService ? self->fHalService->get80211Controller() : NULL;
+                if (ic && ad->ad_ssid_len > 0 && ad->ad_key.key_len == 32) {
+                    struct ieee80211_join j;
+                    bzero(&j, sizeof(j));
+                    j.i_len = ad->ad_ssid_len;
+                    memcpy(j.i_nwid, ad->ad_ssid, ad->ad_ssid_len);
+                    j.i_flags = IEEE80211_JOIN_WPA | IEEE80211_JOIN_WPAPSK
+                              | IEEE80211_JOIN_ANY | IEEE80211_JOIN_8021X;
+                    j.i_wpaparams.i_enabled  = 1;
+                    j.i_wpaparams.i_protos   = IEEE80211_WPA_PROTO_WPA1 | IEEE80211_WPA_PROTO_WPA2;
+                    j.i_wpaparams.i_akms     = IEEE80211_WPA_AKM_PSK | IEEE80211_WPA_AKM_8021X
+                                              | IEEE80211_WPA_AKM_SHA256_PSK | IEEE80211_WPA_AKM_SHA256_8021X;
+                    memcpy(j.i_wpaparams.i_name, "psk", 3);
+                    memcpy(j.i_wpapsk.i_name, "psk", 3);
+                    j.i_wpapsk.i_enabled = 1;
+                    memcpy(j.i_wpapsk.i_psk, ad->ad_key.key, 32);
+                    int er = ieee80211_add_ess(ic, &j);
+                    XYLog("PathB type=20: ieee80211_add_ess(\"%.*s\") = %d ic_state=%d\n",
+                          ad->ad_ssid_len, ad->ad_ssid, er, ic->ic_state);
+                    if (er == 0) {
+                        ic->ic_flags |= IEEE80211_F_AUTO_JOIN;
+                        // Force a fresh scan; on completion ieee80211_end_scan
+                        // → ieee80211_switch_ess matches our new ess entry,
+                        // → ieee80211_node_join_bss → AUTH/ASSOC/RUN.
+                        ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+                    }
+                }
+            }
             break;
         default:
             // unhandled — zero buffer success keeps airportd happy for
