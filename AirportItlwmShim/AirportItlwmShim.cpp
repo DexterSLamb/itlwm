@@ -23,6 +23,7 @@
 #include <Headers/kern_patcher.hpp>
 #include <Headers/kern_util.hpp>
 #include <Headers/kern_version.hpp>
+#include <Headers/kern_mach.hpp>
 
 #include <IOKit/IOService.h>
 #include <IOKit/IOLib.h>
@@ -46,6 +47,22 @@ static const char *kIO80211Path[] = {
 // Used only when boot-arg -aitlwmtrace is set; this is a pure debug aid.
 static const char *kIONetPath[] = {
     "/System/Library/Extensions/IONetworkingFamily.kext/Contents/MacOS/IONetworkingFamily"
+};
+
+// AirportItlwm itself — we patch its vtable at load time. OC injects from EFI but
+// the runtime kext bundle ID matches; Lilu locates by bundle id when path doesn't
+// resolve. Provide a no-op path for symbol resolution to work.
+static const char *kAirportItlwmPath[] = {
+    "/Library/Extensions/AirportItlwm.kext/Contents/MacOS/AirportItlwm",
+    "/System/Library/Extensions/AirportItlwm.kext/Contents/MacOS/AirportItlwm"
+};
+
+static KernelPatcher::KextInfo gAirportItlwmKext {
+    "com.zxystd.AirportItlwm",
+    kAirportItlwmPath, 2,
+    {true, true, false, false, false, false},
+    {},
+    KernelPatcher::KextInfo::Unloaded
 };
 
 // {id, paths, pathNum, sys[Loaded,Reloadable,Disabled,FSOnly,FSFallback,Reserved], user, loadIndex}
@@ -174,6 +191,19 @@ bool AirportItlwmShimPlugin::init()
         return false;
     }
 
+    // Plan A core: register for our own AirportItlwm load to vtable-patch
+    // misaligned slots into Apple's expected positions (slot 410 = getCARD_CAPABILITIES).
+    // Header-based alignment causes kxld to silently reject (vtable size mismatch
+    // with Apple's IO80211Controller); runtime patching via Lilu sidesteps that.
+    err = lilu.onKextLoad(&gAirportItlwmKext, 1,
+        [](void *user, KernelPatcher &kp, size_t idx, mach_vm_address_t addr, size_t size) {
+            static_cast<AirportItlwmShimPlugin *>(user)->onKextLoad(kp, idx, addr, size);
+        }, this);
+    if (err != LiluAPI::Error::NoError) {
+        SYSLOG("aishim", "onKextLoad(AirportItlwm) failed: %d", err);
+        return false;
+    }
+
     // Conditionally register IONetworkingFamily for trace hooks
     if (gTraceEnabled) {
         kprintf("[aitrace] -aitlwmtrace enabled, registering IONetworkingFamily hooks\n");
@@ -262,6 +292,57 @@ void AirportItlwmShimPlugin::onKextLoad(KernelPatcher &kp, size_t idx,
             else
                 SYSLOG("aishim", "postMessage unresolved (non-fatal)");
             kp.clearError();
+        }
+    } else if (idx == gAirportItlwmKext.loadIndex) {
+        // Plan A vtable patch: align our overrides to Apple's expected slots
+        // in IO80211Controller. Our compile lays them out off-by-2 (header
+        // chain has 2 fewer virtuals than Apple's real binary). Fix at runtime.
+        //
+        // Apple expected slots (RE'd from KDK 15.7.4 IO80211Family wrapper call sites):
+        //   slot 410 = getCARD_CAPABILITIES(SkywalkInterface*, capability_data*)
+        //   slot 411 = getDRIVER_VERSION(SkywalkInterface*, version_data*)
+        //   slot 412 = getHARDWARE_VERSION(SkywalkInterface*, version_data*)
+        //   slot 414 = getPOWER(SkywalkInterface*, power_data*)
+        //   slot 415 = setPOWER(SkywalkInterface*, power_data*)
+        //   slot 416 = getCOUNTRY_CODE(SkywalkInterface*, country_code_data*)
+        //   slot 417 = setCOUNTRY_CODE(SkywalkInterface*, country_code_data*)
+        // (slot 413 unknown, leave inherited)
+        auto vtableAddr = kp.solveSymbol(idx, "__ZTV12AirportItlwm");
+        kp.clearError();
+        if (!vtableAddr) {
+            SYSLOG("aishim", "vtable _ZTV12AirportItlwm not found");
+            publishReadyIfDone();
+            return;
+        }
+
+        struct VtableSlot { uint32_t slot; const char *symbol; const char *name; };
+        VtableSlot slots[] = {
+            {410, "__ZN12AirportItlwm20getCARD_CAPABILITIESEP23IO80211SkywalkInterfaceP26apple80211_capability_data", "getCARD_CAPABILITIES"},
+            {411, "__ZN12AirportItlwm17getDRIVER_VERSIONEP23IO80211SkywalkInterfaceP23apple80211_version_data",       "getDRIVER_VERSION"},
+            {412, "__ZN12AirportItlwm19getHARDWARE_VERSIONEP23IO80211SkywalkInterfaceP23apple80211_version_data",     "getHARDWARE_VERSION"},
+            {414, "__ZN12AirportItlwm8getPOWEREP23IO80211SkywalkInterfaceP21apple80211_power_data",                   "getPOWER"},
+            {415, "__ZN12AirportItlwm8setPOWEREP23IO80211SkywalkInterfaceP21apple80211_power_data",                   "setPOWER"},
+            {416, "__ZN12AirportItlwm15getCOUNTRY_CODEEP23IO80211SkywalkInterfaceP28apple80211_country_code_data",    "getCOUNTRY_CODE"},
+            {417, "__ZN12AirportItlwm15setCOUNTRY_CODEEP23IO80211SkywalkInterfaceP28apple80211_country_code_data",    "setCOUNTRY_CODE"},
+        };
+
+        // ZTV layout: [offset_to_top, typeinfo_ptr, vfunc[0], vfunc[1], ...]
+        // vfunc[N] is at ZTV byte offset (N+2)*8 = N*8 + 16.
+        for (auto &s : slots) {
+            auto fn = kp.solveSymbol(idx, s.symbol);
+            kp.clearError();
+            if (!fn) {
+                SYSLOG("aishim", "vtable patch: symbol %s not found", s.name);
+                continue;
+            }
+            mach_vm_address_t targetSlotAddr = vtableAddr + (s.slot * 8 + 16);
+            if (MachInfo::setKernelWriting(true, KernelPatcher::kernelWriteLock) == KERN_SUCCESS) {
+                *reinterpret_cast<uint64_t *>(targetSlotAddr) = static_cast<uint64_t>(fn);
+                MachInfo::setKernelWriting(false, KernelPatcher::kernelWriteLock);
+                kprintf("[aishim] vtable[%u] = %s @ 0x%llx\n", s.slot, s.name, fn);
+            } else {
+                SYSLOG("aishim", "vtable patch slot %u: setKernelWriting failed", s.slot);
+            }
         }
     } else if (gTraceEnabled && idx == gIONetKext.loadIndex) {
         // ONLY hook executeCommandAction. v1 also hooked performCommand and
