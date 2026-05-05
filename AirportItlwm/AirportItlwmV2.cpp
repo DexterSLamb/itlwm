@@ -520,15 +520,20 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
         bool initOK = stub->init();
         bool bindOK = initOK && stub->bindController(self);
         bool attachOK = bindOK && stub->attach(self);
-        XYLog("Path A v5: stub init=%d bind=%d attach=%d\n", initOK, bindOK, attachOK);
-        if (initOK && bindOK && attachOK) {
+        // Phase E3b: explicitly invoke Apple's IO80211SkywalkInterface::start(provider)
+        // so it allocates its 0x350/0x358 helper buffers and populates ivars[0x30],
+        // [0x38], [0xa8], [0xb8], etc. (verified via KDK 15.7.5 disassembly @
+        // 0x15199e). Without this, performGatedCommandIOUC NULL-derefs at sel=0
+        // (driver-version query) AND createEventPipe NULL-derefs ivars[0xa8] on
+        // a follow-up call. start() runs ~250 instructions of setup that we can't
+        // safely replicate by hand.
+        bool startOK = attachOK && stub->start(self);
+        XYLog("Path A v5: stub init=%d bind=%d attach=%d start=%d\n",
+              initOK, bindOK, attachOK, startOK);
+        if (initOK && bindOK && attachOK && startOK) {
             stub->setProperty("IOInterfaceName", "en99");
             stub->setProperty("IO80211InterfaceRole", "Infrastructure");
             stub->setProperty("IOUserClientClass", "IO80211APIUserClient");
-            // Properties Apple framework reads via IORegistry (per KDK strings RE):
-            // IO80211DriverVersion, IO80211HardwareVersion, FirmwareVersion. 提供
-            // 版本字符串可能让 BindToInterfaceWithService 的 driver_version_query
-            // 不依赖 selector 0 dispatch 而是直接 lookup property.
             stub->setProperty("IO80211DriverVersion", "AirportItlwm 2.3.0");
             stub->setProperty("IO80211HardwareVersion", "AX201 1.0.0");
             stub->setProperty("FirmwareVersion", "1.0.0");

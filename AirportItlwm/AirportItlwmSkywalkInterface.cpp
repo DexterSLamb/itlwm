@@ -310,23 +310,6 @@ bindController(AirportItlwm *controller)
     fHalService  = controller->fHalService;
     scanSource   = controller->scanSource;
 
-    // Phase E3: Sequoia 15.7.5 — IO80211SkywalkInterface::performGatedCommandIOUC
-    // (kernel-side dispatcher behind selector 0 of IO80211APIUserClient, which
-    // airportd's Apple80211BindToInterfaceWithService hits for the
-    // DRIVER_VERSION query) reads *((void**)(this+0x110))[0x30] and returns
-    // EINVAL=22 if NULL. Apple normally fills it in
-    // IO80211SkywalkInterface::start(IOService*) via
-    // OSDynamicCast(IO80211Controller, provider) — but our stub is published via
-    // attach()+registerService() with no matching personality, so start() is
-    // never invoked on it and ivars[0x30] stays NULL.
-    // Set the back-pointer manually here. Confirmed via KDK 15.7.5
-    // IO80211Family disassembly @ 0x153008 (performGatedCommandIOUC) and
-    // @ 0x151a4b (start). See docs/012-driver-version-query-RE.md.
-    void *skywalkIvars = *(void * const *)((const char *)this + 0x110);
-    if (skywalkIvars) {
-        *(IO80211Controller **)((char *)skywalkIvars + 0x30) =
-            (IO80211Controller *)controller;
-    }
     return true;
 }
 
