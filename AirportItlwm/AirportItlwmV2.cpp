@@ -367,10 +367,13 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
                           ad->ad_ssid_len, ad->ad_ssid, er, ic->ic_state);
                     if (er == 0) {
                         ic->ic_flags |= IEEE80211_F_AUTO_JOIN;
-                        // Force a fresh scan; on completion ieee80211_end_scan
-                        // → ieee80211_switch_ess matches our new ess entry,
-                        // → ieee80211_node_join_bss → AUTH/ASSOC/RUN.
-                        ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+                        // Phase 3.7-safe: NOT calling ieee80211_new_state(SCAN)
+                        // here — that panic'd on Sequoia 15 (CR2=0x80 NULL deref
+                        // in IO80211Family) because state-machine transitions
+                        // must run on the HAL workloop, not BSD ioctl thread.
+                        // The driver's continuous scan loop (iwm always rescans
+                        // when ic_state==SCAN) will see the new ic_ess entry on
+                        // the next end_scan tick and auto-join via switch_ess.
                     }
                 }
             }
