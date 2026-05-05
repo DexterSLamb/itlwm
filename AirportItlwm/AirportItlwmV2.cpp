@@ -335,48 +335,9 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
             else if (self && !is_get && klen >= sizeof(apple80211_power_data))
                 r = self->setPOWER((OSObject *)NULL, (apple80211_power_data *)kbuf);
             break;
-        case 20: // ASSOCIATE — emulate joinSSID: add_ess + AUTO_JOIN only
-            // PHASE 3.7-safer: do NOT call iface->setASSOCIATE(ad). Two panics
-            // confirmed it deref's NULL+0x80 in IO80211Family when invoked from
-            // BSD ioctl thread (race with HAL workloop scan loop). itlwm v1's
-            // joinSSID (itlwm.cpp:169) doesn't call associateSSID either — just
-            // add_ess + AUTO_JOIN flag, then driver's scan loop self-picks.
-            if (iface && !is_get && klen >= sizeof(apple80211_assoc_data)) {
-                struct apple80211_assoc_data *ad =
-                    (struct apple80211_assoc_data *)kbuf;
-                r = kIOReturnSuccess;
-                struct ieee80211com *ic =
-                    self->fHalService ? self->fHalService->get80211Controller() : NULL;
-                if (ic && ad->ad_ssid_len > 0 && ad->ad_key.key_len == 32) {
-                    struct ieee80211_join j;
-                    bzero(&j, sizeof(j));
-                    j.i_len = ad->ad_ssid_len;
-                    memcpy(j.i_nwid, ad->ad_ssid, ad->ad_ssid_len);
-                    j.i_flags = IEEE80211_JOIN_WPA | IEEE80211_JOIN_WPAPSK
-                              | IEEE80211_JOIN_ANY | IEEE80211_JOIN_8021X;
-                    j.i_wpaparams.i_enabled  = 1;
-                    j.i_wpaparams.i_protos   = IEEE80211_WPA_PROTO_WPA1 | IEEE80211_WPA_PROTO_WPA2;
-                    j.i_wpaparams.i_akms     = IEEE80211_WPA_AKM_PSK | IEEE80211_WPA_AKM_8021X
-                                              | IEEE80211_WPA_AKM_SHA256_PSK | IEEE80211_WPA_AKM_SHA256_8021X;
-                    memcpy(j.i_wpaparams.i_name, "psk", 3);
-                    memcpy(j.i_wpapsk.i_name, "psk", 3);
-                    j.i_wpapsk.i_enabled = 1;
-                    memcpy(j.i_wpapsk.i_psk, ad->ad_key.key, 32);
-                    int er = ieee80211_add_ess(ic, &j);
-                    XYLog("PathB type=20: ieee80211_add_ess(\"%.*s\") = %d ic_state=%d\n",
-                          ad->ad_ssid_len, ad->ad_ssid, er, ic->ic_state);
-                    if (er == 0) {
-                        ic->ic_flags |= IEEE80211_F_AUTO_JOIN;
-                        // Phase 3.7-safe: NOT calling ieee80211_new_state(SCAN)
-                        // here — that panic'd on Sequoia 15 (CR2=0x80 NULL deref
-                        // in IO80211Family) because state-machine transitions
-                        // must run on the HAL workloop, not BSD ioctl thread.
-                        // The driver's continuous scan loop (iwm always rescans
-                        // when ic_state==SCAN) will see the new ic_ess entry on
-                        // the next end_scan tick and auto-join via switch_ess.
-                    }
-                }
-            }
+        case 20: // ASSOCIATE — DROPPED. 3 panics from BSD ioctl ic mods.
+            // Auto-join is now done at boot via Phase C hardcoded add_ess in
+            // createBsdWlanIfnet (workloop-safe context). type=20 is no-op.
             break;
         default:
             // unhandled — zero buffer success keeps airportd happy for
@@ -589,6 +550,45 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
     XYLog("Phase 3.6: enableAdapter(NULL) → 0x%x; ic_state=%d\n",
           er,
           self->fHalService ? self->fHalService->get80211Controller()->ic_state : -1);
+
+    // Phase C: hardcoded auto-join (workloop-context add_ess).
+    // BSD ioctl SET ASSOCIATE racing with iwm scan/newstate/Apple monitor caused
+    // 3 panics (CR2=0x80 IO80211Family deref). Solution: do add_ess HERE in
+    // start() context, before scan loop runs aggressively. Hardcoded SSID/PMK
+    // is acceptable for "verify driver can really associate" milestone.
+    // PMK = PBKDF2-SHA1(passphrase="66668888", salt="DYQ", iter=4096, dklen=32)
+    // computed locally with CCKeyDerivationPBKDF (assoc.c) — see commit msg.
+    if (self->fHalService && self->fHalService->get80211Controller()) {
+        struct ieee80211com *ic = self->fHalService->get80211Controller();
+        static const uint8_t kHardcodedPMK[32] = {
+            0x62, 0x73, 0xa6, 0x9a, 0xa5, 0xf4, 0xf5, 0xe1,
+            0x2f, 0x1d, 0x7f, 0x85, 0xad, 0x7f, 0x78, 0xe9,
+            0xd9, 0x3c, 0xca, 0xae, 0xa1, 0x6d, 0x47, 0x50,
+            0xc3, 0x3e, 0x50, 0x55, 0xc7, 0x44, 0x00, 0x6e,
+        };
+        static const char *kHardcodedSSID = "DYQ";
+        struct ieee80211_join j;
+        bzero(&j, sizeof(j));
+        j.i_len = 3;
+        memcpy(j.i_nwid, kHardcodedSSID, 3);
+        j.i_flags = IEEE80211_JOIN_WPA | IEEE80211_JOIN_WPAPSK
+                  | IEEE80211_JOIN_ANY | IEEE80211_JOIN_8021X;
+        j.i_wpaparams.i_enabled  = 1;
+        j.i_wpaparams.i_protos   = IEEE80211_WPA_PROTO_WPA1 | IEEE80211_WPA_PROTO_WPA2;
+        j.i_wpaparams.i_akms     = IEEE80211_WPA_AKM_PSK | IEEE80211_WPA_AKM_8021X
+                                  | IEEE80211_WPA_AKM_SHA256_PSK | IEEE80211_WPA_AKM_SHA256_8021X;
+        memcpy(j.i_wpaparams.i_name, "psk", 3);
+        memcpy(j.i_wpapsk.i_name, "psk", 3);
+        j.i_wpapsk.i_enabled = 1;
+        memcpy(j.i_wpapsk.i_psk, kHardcodedPMK, 32);
+        int ess_r = ieee80211_add_ess(ic, &j);
+        XYLog("Phase C: hardcoded add_ess(\"%s\") = %d\n", kHardcodedSSID, ess_r);
+        if (ess_r == 0) {
+            ic->ic_flags |= IEEE80211_F_AUTO_JOIN;
+            XYLog("Phase C: AUTO_JOIN flag set; driver scan loop will pick %s\n",
+                  kHardcodedSSID);
+        }
+    }
     return true;
 }
 #endif
