@@ -653,6 +653,15 @@ eventHandler(struct ieee80211com *ic, int msgCode, void *data)
             break;
         case IEEE80211_EVT_STA_ASSOC_DONE:
             interface->postMessage(APPLE80211_M_ASSOC_DONE, NULL, 0, 0);
+            // Phase D4: tell BSD ifnet (bsdInterface = en3) link is active.
+            // In the normal Apple-framework-driven flow, airportd/IO80211Family
+            // calls setLinkStatus(active) when it observes ic_state==RUN, which
+            // marks en3 IFF_RUNNING and lets DHCP/socket traffic flow. Phase C
+            // (boot-time hardcoded auto-join) bypasses that flow, so we wire
+            // the link-up notification here directly. eventHandler runs on the
+            // HAL workloop (called from iwm_newstate_task), so the eventual
+            // setLinkStateGated runAction is properly serialized.
+            that->setLinkStatus(kIONetworkLinkActive | kIONetworkLinkValid);
             break;
         case IEEE80211_EVT_STA_DEAUTH:
             interface->postMessage(APPLE80211_M_DEAUTH_RECEIVED, NULL, 0, 0);
