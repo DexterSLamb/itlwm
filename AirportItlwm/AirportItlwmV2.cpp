@@ -672,20 +672,20 @@ void AirportItlwm::watchdogAction(IOTimerEventSource *timer)
     (*ifp->if_watchdog)(ifp);
     updateLQMIfChanged();
 
-    // Phase D5: poll ic_state, propagate link-up to BSD ifnet.
-    // iwm uses firmware MLME so ieee80211_recv_assoc_resp (which would fire
-    // EVT_STA_ASSOC_DONE) never runs — we cannot rely on event_handler.
-    // Instead poll here every 1s. setLinkStatus is idempotent against last
-    // status (super::setLinkStatus skips if unchanged), so no spam.
-    // Runs on HAL workloop (timerEventSource action), so the cascading
-    // setLinkStateGated runAction is correctly serialized.
+    // Phase D5b: poll ic_state, DIRECTLY toggle bsdInterface (en3) IFF_RUNNING.
+    // D5 went through setLinkStatus → super → setLinkStateGated → bsdInterface
+    // chain but ioreg showed IOLinkActiveCount=0 — super::setLinkStatus
+    // probably filters Active status when activeMedium is NULL or some
+    // precondition unmet. Bypass the chain — bsdInterface->setLinkState
+    // directly does ifnet_set_flags(IFF_UP|IFF_RUNNING).
+    // No race: watchdogAction runs on HAL workloop already.
     {
         int s = fHalService->get80211Controller()->ic_state;
         bool isRun = (s == IEEE80211_S_RUN);
-        UInt32 want = isRun
-            ? (kIONetworkLinkActive | kIONetworkLinkValid)
-            : kIONetworkLinkValid;
-        setLinkStatus(want);
+        if (bsdInterface) {
+            bsdInterface->setLinkState(isRun ? kIO80211NetworkLinkUp
+                                             : kIO80211NetworkLinkDown);
+        }
     }
 
     watchdogTimer->setTimeoutMS(kWatchDogTimerPeriod);
