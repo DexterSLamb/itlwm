@@ -533,6 +533,17 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
             XYLog("Path A v5: stub init/bind/attach failed\n");
         }
     }
+
+    // Phase 3.6: kick HAL state machine. ItlIwm::enable does NOT dereference
+    // netif (verified: it only touches `&com.sc_ic.ic_ac.ac_if`), so passing
+    // NULL is safe. enable → iwm_activate(RESUME/WAKEUP) → iwm_init → ic_state
+    // advances from INIT to SCAN. Required for setSCAN_REQ to not return EINVAL
+    // and for getPOWER to reflect powered-up state.
+    self->power_state = 1;  // mark POWER GET as ON since HAL is being enabled
+    IOReturn er = self->enableAdapter(NULL);
+    XYLog("Phase 3.6: enableAdapter(NULL) → 0x%x; ic_state=%d\n",
+          er,
+          self->fHalService ? self->fHalService->get80211Controller()->ic_state : -1);
     return true;
 }
 #endif
