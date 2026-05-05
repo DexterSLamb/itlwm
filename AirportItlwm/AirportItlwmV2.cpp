@@ -1002,14 +1002,6 @@ bool AirportItlwm::start(IOService *provider)
         releaseAll();
         return false;
     }
-#if __IO80211_TARGET >= __MAC_15_0
-    TRACE_STEP("14d_pre_fNetIf_setProps");
-    fNetIf->setProperty("IOInterfaceName", "en99");
-    fNetIf->setProperty("IO80211InterfaceRole", "Infrastructure");
-    fNetIf->setProperty("IOUserClientClass", "IO80211APIUserClient");
-    XYLog("Plan A: fNetIf published en99/Infrastructure/IO80211APIUserClient\n");
-    TRACE_STEP("14e_post_fNetIf_setProps");
-#endif
     TRACE_STEP("15_post_skywalkAttach");
     if (!attachInterface(fNetIf, this)) {
         TRACE_STEP("FAIL_attachInterface");
@@ -1160,6 +1152,16 @@ bool AirportItlwm::start(IOService *provider)
     registerService();
 
 #if __IO80211_TARGET >= __MAC_15_0
+    // Plan A: 把 properties 放在所有 framework attach 之后. fNetIf 之前
+    // 在 attachInterface/IONetworkController::attachInterface 链里被 framework
+    // 自动设 IOInterfaceName=en8 (next BSD unit) 覆盖了我们 setProperty.
+    // 这里 force 重写, FindService("en99") 才能命中 fNetIf.
+    fNetIf->setProperty("IOInterfaceName", "en99");
+    fNetIf->setProperty("IO80211InterfaceRole", "Infrastructure");
+    fNetIf->setProperty("IOUserClientClass", "IO80211APIUserClient");
+    fNetIf->registerService();  // re-publish so matching pump sees property change
+    XYLog("Plan A: fNetIf re-published en99/Infrastructure/IO80211APIUserClient (after attach)\n");
+
     // Path B Phase 1: 在所有其他 setup 完成后, attach 我们自己的 BSD wifi ifnet.
     // H4 跳过 fNetIf->attach 已经避免 IO80211Family panic, 但 airportd 看不到我们.
     // 这个 BSD KPI ifnet (type=IFT_IEEE80211, ioctl 返 IFM_IEEE80211) 让 airportd
