@@ -247,23 +247,53 @@ public:
     };
 #endif
     virtual IOReturn getDRIVER_VERSION(IO80211SkywalkInterface *interface,apple80211_version_data *data) override {
+#if __IO80211_TARGET >= __MAC_15_0
+        // Defense-in-depth: vtable misalignment 让 Apple framework 可能 call 这个
+        // method 期望 24-byte buffer (本 struct 是 264-byte). 写满会 stack
+        // canary corrupt. 限制写到 ≤ 16 bytes 让任何 buffer 都够用.
+        if (data) {
+            data->version = 1;
+            data->string_len = 5;
+            data->string[0]='1'; data->string[1]='.'; data->string[2]='0';
+            data->string[3]='.'; data->string[4]='0'; data->string[5]=0;
+            // 已写 4+4+8 = 16 bytes
+        }
+        return kIOReturnSuccess;
+#else
         XYLog("%s\n", __FUNCTION__);
         return getDRIVER_VERSION((OSObject *)interface, data);
+#endif
     };
     virtual IOReturn getHARDWARE_VERSION(IO80211SkywalkInterface *interface,apple80211_version_data *data) override {
+#if __IO80211_TARGET >= __MAC_15_0
+        // 同 getDRIVER_VERSION — defense against Apple framework misroute.
+        // 实测 (a4ef849 binary): 我们 vtable[slot 410] = getHARDWARE_VERSION
+        // (off-by-2 错位), Apple's apple80211getCARD_CAPABILITIES wrapper
+        // 调 vtable[410] 给 24-byte stack buffer, 264-byte 写入炸 canary
+        // → panic @stack_protector.c:37. 限 ≤ 16 bytes 写入即安全.
+        if (data) {
+            data->version = 1;
+            data->string_len = 5;
+            data->string[0]='1'; data->string[1]='.'; data->string[2]='0';
+            data->string[3]='.'; data->string[4]='0'; data->string[5]=0;
+        }
+        return kIOReturnSuccess;
+#else
         XYLog("%s\n", __FUNCTION__);
         return getHARDWARE_VERSION((OSObject *)interface, data);
+#endif
     };
     virtual IOReturn getCARD_CAPABILITIES(IO80211SkywalkInterface *interface,apple80211_capability_data *data) override {
-//        XYLog("%s\n", __FUNCTION__);
 #if __IO80211_TARGET >= __MAC_15_0
-        // H2 实验: panic 在 IO80211Family 的 static getCARD_CAPABILITIES 内
-        // (offset 0xfcae5, framework buffer 24 bytes), 反汇编显示我们 driver
-        // memset 20 bytes 不超界. 但 panic 仍在 — 可能 vtable slot 偏移错位
-        // 让 framework 调到错误 method. 让本 method 完全不写, 返 Unsupported.
-        // 如果 panic 仍在 → 不是我们 driver 写入触发, 是更底层 dispatch 问题.
-        // 如果 panic 消失 → 我们 driver getCARD_CAPABILITIES 是触发点.
-        return kIOReturnUnsupported;
+        // 写 ≤ 18 bytes 充满 capability_data (4 version + 14 cap bitmap).
+        // Apple framework's stack buffer 是 24 bytes, 18 bytes ≤ 24, 安全.
+        if (data) {
+            data->version = 1;
+            data->capabilities[0] = (1 << 1) | (1 << 3);                       // TKIP + AES_CCM
+            data->capabilities[1] = (1 << 1) | (1 << 2) | (1 << 4) | (1 << 5) | (1 << 6); // SHSLOT/SHPREAMBLE/TKIPMIC/WPA1/WPA2
+            // 其余 12 bytes 保持 0 (struct 已 zero by Apple framework on stack)
+        }
+        return kIOReturnSuccess;
 #else
         return getCARD_CAPABILITIES((OSObject *)interface, data);
 #endif
