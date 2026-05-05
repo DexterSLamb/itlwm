@@ -491,9 +491,32 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
     // 回滚 v1: stub = bare IOService. commonStart 第一 cast 必 fail, 但至少
     // 恢复 en99 + airportd 把 en99 当 wifi 接口用 (通过 BSD ioctl GET 路径).
     // commonStart 完整 IS-A IO80211SkywalkInterface 路径需要更深 RE / 不同方案.
-    // Plan A 路径: properties 已 publish 在 fNetIf (start() 里, line 1023+).
-    // 不再创 stub IOService — 双 service 同 IOInterfaceName=en99 让 FindService
-    // 二选一不可控, airportd 可能选裸 IOService 导致 commonStart cast fail.
+    // Plan A v5: fNetIf 的 IOInterfaceName 一直被 framework 自动改成 en{N}
+    // (next BSD unit, 我们 setProperty 后还是被覆盖). 反过来用 stub 搞,
+    // stub 用 AirportItlwmSkywalkInterface (IS-A SkywalkInterface 满足 commonStart
+    // cast 1), 单独 attach + register, IOInterfaceName=en99 不被框架 touch
+    // (因为 stub 不被 framework 当主 net interface).
+    //
+    // 之前 (46ee400) 同方案 break driver start. 现在 9631f49 加了 capped writes
+    // (getDRIVER/HARDWARE_VERSION 限 ≤16 bytes 防 stack canary), 即使 framework
+    // 错调 stub 的 vtable[410] 也不 panic. 重试这个方案.
+    AirportItlwmSkywalkInterface *stub = new AirportItlwmSkywalkInterface;
+    XYLog("Path A v5: new AirportItlwmSkywalkInterface stub → %p\n", stub);
+    if (stub) {
+        bool initOK = stub->init();
+        bool attachOK = initOK && stub->attach(self);
+        XYLog("Path A v5: stub init=%d attach=%d\n", initOK, attachOK);
+        if (initOK && attachOK) {
+            stub->setProperty("IOInterfaceName", "en99");
+            stub->setProperty("IO80211InterfaceRole", "Infrastructure");
+            stub->setProperty("IOUserClientClass", "IO80211APIUserClient");
+            stub->registerService();
+            XYLog("Path A v5: stub registered (IOInterfaceName=en99)\n");
+        } else {
+            stub->release();
+            XYLog("Path A v5: stub init/attach failed\n");
+        }
+    }
     return true;
 }
 #endif
