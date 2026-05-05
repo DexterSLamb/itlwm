@@ -288,46 +288,54 @@ static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
             }
         }
 
+        // Phase 3.5: forward into existing handlers — both AirportItlwm and
+        // AirportItlwmSkywalkInterface have working implementations on Sequoia 15:
+        //   - SCAN_REQ/SCAN_RESULT/STATE → AirportItlwmSkywalkInterface methods
+        //     (fNetIf is `new AirportItlwmSkywalkInterface` at V2.cpp ~962, its
+        //      init(this) populates fHalService/scanSource from `instance`)
+        //   - CARD_CAPABILITIES/POWER → AirportItlwm class methods (OSObject*
+        //     overload at V2.cpp 1639/1769/1784, declared via FUNC_IOCTL macro
+        //     in V2.hpp ~340)
+        // All symbols ALREADY in Sequoia15 binary (verified via nm), no new
+        // symbols introduced. No V2.hpp churn.
+        AirportItlwm *self = (AirportItlwm *)ifnet_softc(ifp);
+        AirportItlwmSkywalkInterface *iface = self
+            ? OSDynamicCast(AirportItlwmSkywalkInterface, self->fNetIf)
+            : NULL;
+
         IOReturn r = kIOReturnSuccess;
-        // Permissive Phase 2 dispatch — 让 airportd 至少把 en99 当 "正常但未关联"
-        // 的 wifi 接口接受. 大多数 GET 用 zero-buffer (kbuf 已 bzero), version=1.
-        // SET 全 no-op success. 实际 scan/associate 等到 Phase 3 再 wire.
         if (is_get && klen >= 4) {
-            // 几乎所有 apple80211 data struct 第一个字段是 u_int32_t version
             uint32_t version = 1; // APPLE80211_VERSION
             memcpy(kbuf, &version, 4);
         }
+
         switch (req->req_type) {
-        case 12: // APPLE80211_IOC_CARD_CAPABILITIES
-            if (is_get && klen >= 18) {
-                // struct apple80211_capability_data { u_int32_t version; u_int8_t cap[14]; }
-                uint8_t *cap = (uint8_t *)kbuf + 4;
-                cap[0] = (1 << 1) | (1 << 3);                       // TKIP + AES_CCM
-                cap[1] = (1 << (9-8)) | (1 << (10-8))               // SHSLOT + SHPREAMBLE
-                       | (1 << (12-8)) | (1 << (13-8)) | (1 << (14-8)); // TKIPMIC + WPA1 + WPA2
-                cap[2] = 0xFF;
-                cap[3] = 0x2B;
-                cap[4] = 0xAD;
-                cap[5] = 0x80 | 0x0C;
-                cap[6] = 0x8 | 0x4 | 0x80;
-            }
+        case 10: // SCAN_REQ — set, on SkywalkInterface
+            if (iface && !is_get && klen >= sizeof(apple80211_scan_data))
+                r = iface->setSCAN_REQ((apple80211_scan_data *)kbuf);
             break;
-        case 13: // APPLE80211_IOC_STATE — 0 = INIT (idle, not connected)
-            // kbuf 已 bzero version=1, state field at offset 4 = 0 (INIT)
+        case 11: // SCAN_RESULT — get, on SkywalkInterface
+            if (iface && is_get && klen >= sizeof(apple80211_scan_result))
+                r = iface->getSCAN_RESULT((apple80211_scan_result *)kbuf);
             break;
-        case 19: // APPLE80211_IOC_POWER
-            // struct apple80211_power_data { u32 version; u32 num_radios; u32 power_state[4]; } = 24 bytes
-            // 报 power=ON 让 airportd 解锁 scan/associate 路径. SET 也 no-op success.
-            if (is_get && klen >= 24) {
-                ((uint32_t *)kbuf)[1] = 1;  // num_radios = 1
-                ((uint32_t *)kbuf)[2] = 1;  // power_state[0] = ON
-            }
+        case 12: // CARD_CAPABILITIES — get, on AirportItlwm (OSObject* overload)
+            if (self && is_get && klen >= sizeof(apple80211_capability_data))
+                r = self->getCARD_CAPABILITIES((OSObject *)NULL,
+                                               (apple80211_capability_data *)kbuf);
             break;
-        case 1:   // APPLE80211_IOC_SSID — return zero ssid (not connected)
-        case 9:   // APPLE80211_IOC_BSSID — return zero bssid
-        case 103: // APPLE80211_IOC_CURRENT_NETWORK — return empty network
+        case 13: // STATE — get (real ic_state from HAL, not hardcoded 0)
+            if (iface && is_get && klen >= sizeof(apple80211_state_data))
+                r = iface->getSTATE((apple80211_state_data *)kbuf);
+            break;
+        case 19: // POWER — get/set, on AirportItlwm
+            if (self && is_get && klen >= sizeof(apple80211_power_data))
+                r = self->getPOWER((OSObject *)NULL, (apple80211_power_data *)kbuf);
+            else if (self && !is_get && klen >= sizeof(apple80211_power_data))
+                r = self->setPOWER((OSObject *)NULL, (apple80211_power_data *)kbuf);
+            break;
         default:
-            // 其他都返 zero buffer success — airportd 把它解读为 "无数据/未关联"
+            // unhandled — zero buffer success keeps airportd happy for
+            // queries we haven't wired yet
             break;
         }
 
