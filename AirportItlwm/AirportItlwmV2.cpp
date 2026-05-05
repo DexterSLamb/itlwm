@@ -511,8 +511,15 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
             stub->setProperty("IOInterfaceName", "en99");
             stub->setProperty("IO80211InterfaceRole", "Infrastructure");
             stub->setProperty("IOUserClientClass", "IO80211APIUserClient");
+            // Properties Apple framework reads via IORegistry (per KDK strings RE):
+            // IO80211DriverVersion, IO80211HardwareVersion, FirmwareVersion. 提供
+            // 版本字符串可能让 BindToInterfaceWithService 的 driver_version_query
+            // 不依赖 selector 0 dispatch 而是直接 lookup property.
+            stub->setProperty("IO80211DriverVersion", "AirportItlwm 2.3.0");
+            stub->setProperty("IO80211HardwareVersion", "AX201 1.0.0");
+            stub->setProperty("FirmwareVersion", "1.0.0");
             stub->registerService();
-            XYLog("Path A v5: stub registered (IOInterfaceName=en99) bound to controller\n");
+            XYLog("Path A v5: stub registered (en99/Infrastructure/IO80211APIUserClient + DriverVersion props)\n");
         } else {
             stub->release();
             XYLog("Path A v5: stub init/bind/attach failed\n");
