@@ -382,7 +382,14 @@ public:
     IOWorkLoop *fWatchdogWorkLoop;
     ItlHalService *fHalService;
     unsigned long long fLastReportedLQM;
-    
+#if __IO80211_TARGET >= __MAC_15_0
+    // Set true at successful end of start(). executeCommand uses this to
+    // distinguish init-time legitimate Apple framework calls (must be
+    // forwarded to super) from runtime poison calls (~11min watchdog
+    // through IO80211Family DATA segment, must be blocked).
+    bool fSequoiaStartCompleted;
+#endif
+
     //IO80211
     uint8_t power_state;
     struct ieee80211_node *fNextNodeToSend;

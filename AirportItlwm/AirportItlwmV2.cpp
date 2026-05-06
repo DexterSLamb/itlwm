@@ -1477,6 +1477,15 @@ bool AirportItlwm::start(IOService *provider)
     }
 #endif
 
+#if __IO80211_TARGET >= __MAC_15_0
+    // Now that all attachInterface / IONetworkController::attachInterface
+    // calls have completed (each internally went through commandGate →
+    // executeCommand which our override forwarded to super), gate the
+    // executeCommand path closed. Subsequent calls — Apple's ~11min
+    // periodic poison watchdog through IO80211Family DATA — will return
+    // kIOReturnUnsupported instead of panicking.
+    fSequoiaStartCompleted = true;
+#endif
     TRACE_STEP("22_DONE");
     return true;
 }
@@ -1673,10 +1682,20 @@ IOReturn AirportItlwm::executeCommand(OSObject *client,
                                       void *param0, void *param1,
                                       void *param2, void *param3)
 {
-    char buf[160];
-    snprintf(buf, sizeof(buf), "client=%p action=%p target=%p p0=%p",
-             client, (void *)action, target, param0);
+    char buf[180];
+    snprintf(buf, sizeof(buf), "phase=%s action=%p target=%p p0=%p",
+             fSequoiaStartCompleted ? "post" : "init",
+             (void *)action, target, param0);
     instr_event("executeCommand", buf);
+    if (!fSequoiaStartCompleted) {
+        // Init phase: IONetworkController::attachInterface and friends rely
+        // on this dispatch chain. Forward to super so the framework can
+        // wire us up.
+        return super::executeCommand(client, action, target,
+                                     param0, param1, param2, param3);
+    }
+    // Steady state: Apple's periodic watchdog (~11min) calls executeCommand
+    // with an action pointing into IO80211Family DATA → NX panic. Block.
     return kIOReturnUnsupported;
 }
 #endif
