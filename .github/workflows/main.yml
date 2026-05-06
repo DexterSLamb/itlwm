@@ -96,7 +96,11 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: kexts-${{ env.SHORT_SHA }}
-        path: ${{ env.BUILD_OUTPUT }}/*.zip
+        # Only upload Sequoia15 to stay under GitHub artifact storage quota
+        # (500MB free tier). Sequoia15 zip is ~15MB vs ~135MB for full set.
+        # Master branch's GitHub Release (line ~115) still publishes the
+        # complete set for end users on older macOS versions.
+        path: ${{ env.BUILD_OUTPUT }}/AirportItlwm-Sequoia15-*.zip
         retention-days: 30
 
     - name: Generate Release Notes
