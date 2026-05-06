@@ -148,15 +148,24 @@ PostMessageFn gShimPostMessage = nullptr;
 
 bool resolveSequoiaShimSymbols(void)
 {
+    XYLog("INSTR resolveSequoiaShimSymbols ENTER\n");
     IOService *res = IOService::getResourceService();
-    if (!res) return false;
+    if (!res) {
+        XYLog("INSTR resolveSequoiaShimSymbols: getResourceService NULL\n");
+        return false;
+    }
 
     auto pull = [&](const char *key) -> uint64_t {
         OSObject *o = res->getProperty(key);
         OSData *d = OSDynamicCast(OSData, o);
-        if (!d || d->getLength() != sizeof(uint64_t)) return 0;
+        if (!d || d->getLength() != sizeof(uint64_t)) {
+            XYLog("INSTR pull(%s) -> NULL (data=%p len=%u)\n",
+                  key, d, d ? d->getLength() : 0);
+            return 0;
+        }
         uint64_t v = 0;
         memcpy(&v, d->getBytesNoCopy(), sizeof(v));
+        XYLog("INSTR pull(%s) -> %p\n", key, (void *)v);
         return v;
     };
 
@@ -164,7 +173,10 @@ bool resolveSequoiaShimSymbols(void)
     gShimRxWithPool  = (RxWithPoolFn) pull("AirportItlwm-IOSkywalkRxCompletionQueue-withPool");
     gShimPostMessage = (PostMessageFn)pull("AirportItlwm-IO80211Controller-postMessage");
 
-    return gShimTxWithPool != nullptr && gShimRxWithPool != nullptr;
+    bool ok = gShimTxWithPool != nullptr && gShimRxWithPool != nullptr;
+    XYLog("INSTR resolveSequoiaShimSymbols EXIT ok=%d (Tx=%p Rx=%p PM=%p)\n",
+          ok, gShimTxWithPool, gShimRxWithPool, gShimPostMessage);
+    return ok;
 }
 #endif
 
@@ -1495,6 +1507,69 @@ void AirportItlwm::free()
 }
 
 #if __IO80211_TARGET >= __MAC_15_0
+// ===== Stage 5 diagnostic: terminate / message instrumentation =====
+// 12:08 panic: AirportItlwm::free() at uptime ~11min via IONetworkingFamily.
+// Need to know which IOService initiates teardown so the fix is targeted.
+// All hooks log provider class + options + (for message) symbolic kIOMessage*
+// then forward to super:: with identical args. Zero behavior change.
+
+bool AirportItlwm::willTerminate(IOService *provider, IOOptionBits options)
+{
+    XYLog("INSTR willTerminate provider=%s opt=0x%x\n",
+          provider ? provider->getMetaClass()->getClassName() : "(null)",
+          (unsigned)options);
+    return super::willTerminate(provider, options);
+}
+
+bool AirportItlwm::requestTerminate(IOService *provider, IOOptionBits options)
+{
+    XYLog("INSTR requestTerminate provider=%s opt=0x%x\n",
+          provider ? provider->getMetaClass()->getClassName() : "(null)",
+          (unsigned)options);
+    return super::requestTerminate(provider, options);
+}
+
+bool AirportItlwm::didTerminate(IOService *provider, IOOptionBits options,
+                                bool *defer)
+{
+    XYLog("INSTR didTerminate provider=%s opt=0x%x defer=%p\n",
+          provider ? provider->getMetaClass()->getClassName() : "(null)",
+          (unsigned)options, defer);
+    return super::didTerminate(provider, options, defer);
+}
+
+bool AirportItlwm::terminate(IOOptionBits options)
+{
+    XYLog("INSTR terminate opt=0x%x\n", (unsigned)options);
+    return super::terminate(options);
+}
+
+IOReturn AirportItlwm::message(UInt32 type, IOService *provider, void *argument)
+{
+    const char *sym = "?";
+    switch (type) {
+    case kIOMessageServiceIsTerminated:        sym = "IsTerminated"; break;
+    case kIOMessageServiceIsSuspended:         sym = "IsSuspended"; break;
+    case kIOMessageServiceIsResumed:           sym = "IsResumed"; break;
+    case kIOMessageServiceIsRequestingClose:   sym = "IsRequestingClose"; break;
+    case kIOMessageServiceIsAttemptingOpen:    sym = "IsAttemptingOpen"; break;
+    case kIOMessageServiceWasClosed:           sym = "WasClosed"; break;
+    case kIOMessageServiceBusyStateChange:     sym = "BusyStateChange"; break;
+    case kIOMessageServicePropertyChange:      sym = "PropertyChange"; break;
+    case kIOMessageCanDevicePowerOff:          sym = "CanDevicePowerOff"; break;
+    case kIOMessageDeviceWillPowerOff:         sym = "DeviceWillPowerOff"; break;
+    case kIOMessageDeviceWillNotPowerOff:      sym = "DeviceWillNotPowerOff"; break;
+    case kIOMessageDeviceHasPoweredOn:         sym = "DeviceHasPoweredOn"; break;
+    default: break;
+    }
+    XYLog("INSTR message type=0x%x(%s) provider=%s arg=%p\n",
+          (unsigned)type, sym,
+          provider ? provider->getMetaClass()->getClassName() : "(null)",
+          argument);
+    return super::message(type, provider, argument);
+}
+// ===== end Stage 5 diagnostic =====
+
 IO80211WorkQueue *AirportItlwm::createWorkQueue()
 {
     if (_fWorkloop == nullptr) {

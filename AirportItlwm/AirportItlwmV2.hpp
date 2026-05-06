@@ -157,6 +157,21 @@ public:
                                     void *target,
                                     void *param0 = 0, void *param1 = 0,
                                     void *param2 = 0, void *param3 = 0) override;
+
+    // Sequoia 15 instrumentation (Stage 5 diagnostic, no business-logic
+    // change): identify which IOService caller terminates us at ~11min
+    // uptime per panic 12:08 (NX fault through AirportItlwm::free()).
+    // All implementations XYLog provider/options/type then forward to
+    // super:: with the same arguments — no behavior change.
+    virtual bool willTerminate(IOService *provider,
+                               IOOptionBits options) override;
+    virtual bool requestTerminate(IOService *provider,
+                                  IOOptionBits options) override;
+    virtual bool didTerminate(IOService *provider, IOOptionBits options,
+                              bool *defer) override;
+    virtual bool terminate(IOOptionBits options = 0) override;
+    virtual IOReturn message(UInt32 type, IOService *provider,
+                             void *argument = 0) override;
 #else
     virtual IO80211WorkQueue *getWorkQueue() override;
 #endif
