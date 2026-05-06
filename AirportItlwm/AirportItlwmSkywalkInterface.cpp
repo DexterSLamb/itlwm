@@ -970,12 +970,28 @@ setDEAUTH(struct apple80211_deauth_data *da)
 IOReturn AirportItlwmSkywalkInterface::
 getMCS(struct apple80211_mcs_data* md)
 {
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia 15.7.5 (2026-05-07): kernel stack canary corruption observed
+    // in __ZL6getMCS (IO80211Family +0xFDCCD) at uptime 90s when airportd
+    // queries MCS. Apple's getMCS allocates an 8-byte stack buffer at
+    // -0x30(%rbp) for apple80211_mcs_data, with canary at -0x20 (16 bytes
+    // away). Our header struct is 8 bytes ({version, index}) and our
+    // handler writes exactly 8 bytes — should fit. Yet stack canary is
+    // corrupted on return (panic 2026-05-07-005037). Mechanism not yet
+    // pinned (could be sendIOUCToWcl response copy-back overflow on 15).
+    //
+    // Stub to Unsupported — mirrors setLQM/executeCommand stub pattern
+    // already proven for other handlers. wdutil/CoreWLAN handle Unsupported
+    // gracefully (treat as "MCS info unavailable", not fatal).
+    return kIOReturnUnsupported;
+#else
     struct ieee80211com *ic = fHalService->get80211Controller();
     if (ic->ic_state != IEEE80211_S_RUN ||  ic->ic_bss == NULL || !md)
         return 6;
     md->version = APPLE80211_VERSION;
     md->index = ic->ic_bss->ni_txmcs;
     return kIOReturnSuccess;
+#endif
 }
 
 IOReturn AirportItlwmSkywalkInterface::
