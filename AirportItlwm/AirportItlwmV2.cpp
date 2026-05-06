@@ -263,17 +263,31 @@ skywalkTxAction(OSObject *owner, IOSkywalkTxSubmissionQueue *queue,
     return consumed;
 }
 
-// Stage 1 Skywalk RX completion action — observability only. Apple calls
-// this *after* it consumes packets we previously enqueued via
-// rxQueue->enqueuePackets. Stage 4 will free the consumed packets back
-// to the pool here. For now just log.
+// Stage 4 Skywalk RX completion action — release consumed packets back to
+// the pool so Apple's framework can refill. Apple calls us *after* it has
+// consumed packets we previously pushed via enqueuePackets.
 static unsigned int
 skywalkRxAction(OSObject *owner, IOSkywalkRxCompletionQueue *queue,
                 IOSkywalkPacket **packets, UInt32 count, void *refCon)
 {
-    (void)owner; (void)queue; (void)packets; (void)refCon;
-    XYLog("Skywalk RX: completion action count=%u\n", (unsigned)count);
-    return 0;
+    (void)owner; (void)refCon;
+    for (UInt32 i = 0; i < count; i++) {
+        if (packets[i])
+            packets[i]->completeWithQueue((IOSkywalkPacketQueue *)queue, 0, 0);
+    }
+    return count;
+}
+
+// Stage 4: Direct-symbol calls to Apple's pool allocate API. Local Pool
+// header declares allocatePackets as virtual but vtable layout uncertain;
+// bypass via asm-renamed C function declaration. kxld resolves at boot.
+extern "C" {
+IOReturn skywalk_pool_allocatePackets(IOSkywalkPacketBufferPool *self,
+                                      UInt32 bufCount,
+                                      UInt32 *numPackets,
+                                      IOSkywalkPacket **outPackets,
+                                      IOOptionBits options)
+    asm("__ZN25IOSkywalkPacketBufferPool15allocatePacketsEjPjPP15IOSkywalkPacketj");
 }
 
 // Path B Phase 1: 用 BSD KPI public API 自建 ifnet, type=IFT_IEEE80211.
@@ -822,6 +836,53 @@ void AirportItlwm::fakeScanDone(OSObject *owner, IOTimerEventSource *sender)
     AirportItlwm *that = (AirportItlwm *)owner;
     that->fNetIf->postMessage(APPLE80211_M_SCAN_DONE, &msg, 4, 0);
 }
+
+#if __IO80211_TARGET >= __MAC_15_0
+// Stage 4: push an mbuf into Skywalk RX so Apple's wrap interface (en35)
+// receives the packet alongside legacy bsdInterface (en3). Called from
+// AirportItlwmEthernetInterface::inputPacket. Releases packets back to
+// pool via skywalkRxAction completion notification (Apple drives that).
+void AirportItlwm::skywalkInjectRx(mbuf_t mbuf)
+{
+    if (!fRxPool || !fRxQueue || !mbuf) return;
+
+    // Allocate one Skywalk packet from RX pool
+    IOSkywalkPacket *pkt = NULL;
+    UInt32 nAlloc = 0;
+    if (skywalk_pool_allocatePackets(fRxPool, 0, &nAlloc, &pkt, 0)
+            != kIOReturnSuccess
+        || nAlloc == 0 || !pkt) {
+        return;  // pool exhausted
+    }
+
+    IOSkywalkPacketBuffer *pb = NULL;
+    if (pkt->getPacketBuffers(&pb, 1) == 0 || !pb) return;
+
+    IOSkywalkMemorySegment *seg = pb->getMemorySegment();
+    if (!seg) return;
+
+    UInt64 segVA = seg->getVirtualAddress();
+    UInt64 segOff = pb->getMemorySegmentOffset();
+    UInt32 dataOff = pb->getDataOff();
+    if (segVA == 0) return;
+
+    void *kva = (void *)(uintptr_t)(segVA + segOff + dataOff);
+
+    size_t len = mbuf_pkthdr_len(mbuf);
+    if (len == 0 || len > 2048) return;  // sanity / pool buffer cap
+
+    if (mbuf_copydata(mbuf, 0, len, kva) != 0) return;
+
+    pb->setDataLength((UInt32)len);
+    pkt->setDataLength((UInt32)len);
+
+    if (pkt->prepare((IOSkywalkPacketQueue *)fRxQueue, 0, 0)
+            != kIOReturnSuccess) {
+        return;
+    }
+    fRxQueue->enqueuePackets(&pkt, 1, 0);
+}
+#endif
 
 bool AirportItlwm::init(OSDictionary *properties)
 {

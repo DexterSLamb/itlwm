@@ -348,7 +348,15 @@ public:
     FUNC_IOCTL_GET(DRIVER_VERSION, apple80211_version_data)
     FUNC_IOCTL_GET(HARDWARE_VERSION, apple80211_version_data)
     FUNC_IOCTL(COUNTRY_CODE, apple80211_country_code_data)
-    
+
+#if __IO80211_TARGET >= __MAC_15_0
+    // Stage 4: push an mbuf into the Skywalk RX completion queue so the
+    // Apple-managed wrap interface (en35) sees inbound packets. Called
+    // from AirportItlwmEthernetInterface::inputPacket. Safe to call with
+    // fRxPool/fRxQueue NULL (no-op).
+    void skywalkInjectRx(mbuf_t mbuf);
+#endif
+
 public:
     IOInterruptEventSource* fInterrupt;
     IOTimerEventSource *watchdogTimer;

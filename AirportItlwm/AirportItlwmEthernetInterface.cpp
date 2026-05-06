@@ -172,7 +172,7 @@ inputPacket(mbuf_t packet, UInt32 length, IOOptionBits options, void *param)
 {
     ether_header_t *eh;
     size_t len = mbuf_len(packet);
-    
+
     eh = (ether_header_t *)mbuf_data(packet);
     if (len >= sizeof(ether_header_t) && eh->ether_type == htons(ETHERTYPE_PAE)) { // EAPOL packet
         const char* dump = hexdump((uint8_t*)mbuf_data(packet), len);
@@ -180,5 +180,15 @@ inputPacket(mbuf_t packet, UInt32 length, IOOptionBits options, void *param)
         if (dump)
             IOFree((void*)dump, 3 * len + 1);
     }
+
+#if __IO80211_TARGET >= __MAC_15_0
+    // Stage 4: dual-deliver — also push into Skywalk RX so Apple's wrap
+    // interface (en35) sees the packet. Original legacy bsdInterface (en3)
+    // path remains via super::inputPacket below for now (revisit in Stage
+    // 5 once en35 path is verified).
+    AirportItlwm *drv = OSDynamicCast(AirportItlwm, getController());
+    if (drv) drv->skywalkInjectRx(packet);
+#endif
+
     return IOEthernetInterface::inputPacket(packet, length, options, param);
 }
