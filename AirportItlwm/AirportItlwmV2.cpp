@@ -146,6 +146,13 @@ TxWithPoolFn  gShimTxWithPool  = nullptr;
 RxWithPoolFn  gShimRxWithPool  = nullptr;
 PostMessageFn gShimPostMessage = nullptr;
 
+// Forward declaration: instr_event body is at ~line 1559 (after the
+// terminate hooks). Must be visible to bsd_wlan_ioctl at line 342 which
+// is also __MAC_15_0+ Sequoia-only code.
+#if __IO80211_TARGET >= __MAC_15_0
+static void instr_event(const char *hook, const char *details);
+#endif
+
 bool resolveSequoiaShimSymbols(void)
 {
     XYLog("INSTR resolveSequoiaShimSymbols ENTER\n");
