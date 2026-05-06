@@ -179,21 +179,42 @@ bool resolveSequoiaShimSymbols(void)
 // different mangling ("PFi..." vs "PFj..."), and Apple only exports the "j"
 // variant. Returning IOReturn left withPool unresolved -> driver silently
 // not loaded.
+// Stage 1 Skywalk TX action — observability only. Apple framework calls
+// this when it has packets ready for the driver. We don't yet enqueue
+// anything to iwm — just log so we can confirm Apple is dispatching here.
+// Returns 0 (= "consumed 0 packets") so Apple holds them and retries.
+// Stage 2 will replace return 0 with real iwm enqueue + return count.
 static unsigned int
 skywalkTxAction(OSObject *owner, IOSkywalkTxSubmissionQueue *queue,
                 IOSkywalkPacket * const *packets, UInt32 count, void *refCon)
 {
-    (void)owner; (void)queue; (void)packets; (void)refCon;
+    (void)owner; (void)queue; (void)refCon;
+    XYLog("Skywalk TX: action called count=%u\n", (unsigned)count);
+    for (UInt32 i = 0; i < count && i < 4; i++) {
+        IOSkywalkPacket *pkt = packets[i];
+        if (!pkt) { XYLog("  pkt[%u] = NULL\n", i); continue; }
+        IOSkywalkPacketBuffer *pb = NULL;
+        UInt32 nbufs = pkt->getPacketBuffers(&pb, 1);
+        UInt32 dataOff = pb ? pb->getDataOff() : 0;
+        UInt64 segOff  = pb ? pb->getMemorySegmentOffset() : 0;
+        IOSkywalkMemorySegment *seg = pb ? pb->getMemorySegment() : NULL;
+        UInt64 segVA   = seg ? seg->getVirtualAddress() : 0;
+        XYLog("  pkt[%u]=%p nbufs=%u pb=%p dataOff=%u segOff=%llu segVA=0x%llx\n",
+              i, pkt, nbufs, pb, dataOff, segOff, segVA);
+    }
     return 0;
 }
 
-// Stub Skywalk RX completion action: completion notification only —
-// actual RX injection still goes through the legacy if_input path.
+// Stage 1 Skywalk RX completion action — observability only. Apple calls
+// this *after* it consumes packets we previously enqueued via
+// rxQueue->enqueuePackets. Stage 4 will free the consumed packets back
+// to the pool here. For now just log.
 static unsigned int
 skywalkRxAction(OSObject *owner, IOSkywalkRxCompletionQueue *queue,
                 IOSkywalkPacket **packets, UInt32 count, void *refCon)
 {
     (void)owner; (void)queue; (void)packets; (void)refCon;
+    XYLog("Skywalk RX: completion action count=%u\n", (unsigned)count);
     return 0;
 }
 

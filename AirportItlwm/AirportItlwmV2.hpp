@@ -36,6 +36,12 @@
 // IOSkywalkPacketBufferPool with different include guards (collision).
 #include "Airport/IOSkywalkTxSubmissionQueue.h"
 #include "Airport/IOSkywalkRxCompletionQueue.h"
+// Stage 1 Skywalk wiring — minimal local headers for Packet/Buffer/Memory
+// classes (avoid MacKernelSDK collisions). Mangled symbols verified
+// T-exported in BootKC 15.7.5; kxld resolves at boot.
+#include "Airport/IOSkywalkPacket.h"
+#include "Airport/IOSkywalkPacketBuffer.h"
+#include "Airport/IOSkywalkMemorySegment.h"
 #endif
 
 enum

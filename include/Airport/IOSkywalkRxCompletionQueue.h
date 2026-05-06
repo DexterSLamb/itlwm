@@ -32,6 +32,15 @@ public:
         IOSkywalkRxCompletionQueueAction action,
         void *refCon,
         IOOptionBits options);
+
+    // T: __ZN26IOSkywalkRxCompletionQueue14enqueuePacketsEPKP15IOSkywalkPacketjj
+    // Push received packets to the framework. count = packets in array;
+    // flags 0 normal, 0x1 sync wakeup. Returns kIOReturnSuccess (0) or
+    // 0xe00002c2 (bad arg) / 0xe00002d5 (queue stopped) /
+    // 0xe00002d7 (not enabled) / 0xe00002d8 (no consumer attached).
+    virtual IOReturn enqueuePackets(IOSkywalkPacket * const *packets,
+                                    UInt32 count,
+                                    UInt32 flags);
 };
 
 #endif /* _AIRPORT_IOSKYWALKRXCOMPLETIONQUEUE_H */
