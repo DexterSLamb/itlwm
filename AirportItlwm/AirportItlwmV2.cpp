@@ -842,7 +842,19 @@ void AirportItlwm::updateLQMIfChanged()
     }
     if (lq != fLastReportedLQM) {
         fLastReportedLQM = lq;
+#if __IO80211_TARGET >= __MAC_15_0
+        // Sequoia 15.7.5: setLQM panics ~7.5min into watchdog cadence after
+        // Stage 5 stub->start. IO80211Family's setLQM body derefs ivar at
+        // offset 0x80 which Stage 5's framework attach leaves NULL on 15.
+        // Panic 2026-05-06 19:05:31 (uptime 452s): CR2=0x80, RAX has the
+        // ASCII tag "fLQM ", path watchdogAction → updateLQMIfChanged+0xEB
+        // → IO80211Family → kernel NULL+0x80. Sonoma 14.x doesn't trip this
+        // because its IO80211InfraInterface schema differs.
+        // iServices isn't a Phase 1 goal on 15 anyway — skip until we have
+        // KDK-confirmed Sequoia setLQM vtable + ivar layout.
+#else
         fNetIf->setLQM(lq);
+#endif
     }
 }
 
@@ -1510,37 +1522,66 @@ void AirportItlwm::free()
 // ===== Stage 5 diagnostic: terminate / message instrumentation =====
 // 12:08 panic: AirportItlwm::free() at uptime ~11min via IONetworkingFamily.
 // Need to know which IOService initiates teardown so the fix is targeted.
-// All hooks log provider class + options + (for message) symbolic kIOMessage*
-// then forward to super:: with identical args. Zero behavior change.
+//
+// Sequoia 15.7.5 silently drops kernel IOLog from our kext (TRACE_STEP
+// in start() switched to IOReg properties for the same reason — see
+// types.h:113-114 and TRACE_STEP @1067). So instead of XYLog, every
+// hook fire writes a uniquely-named OSString property onto the
+// IOResources service:
+//   INSTR_<seqno-zero-padded>_<hook> = "<details>"
+// Numeric prefix gives temporal ordering in `ioreg -lw0`.
+// Hooks still call super:: with identical args → zero behavior change.
+
+static volatile SInt32 g_instr_seq = 0;
+
+static void instr_event(const char *hook, const char *details)
+{
+    UInt32 seq = (UInt32)OSIncrementAtomic(&g_instr_seq);
+    IOService *res = IOService::getResourceService();
+    if (!res) return;
+    char key[96];
+    snprintf(key, sizeof(key), "INSTR_%04u_%s", seq, hook);
+    OSString *v = OSString::withCString(details ? details : "");
+    if (v) { res->setProperty(key, v); v->release(); }
+    res->setProperty("INSTR_last", details ? details : "");
+}
 
 bool AirportItlwm::willTerminate(IOService *provider, IOOptionBits options)
 {
-    XYLog("INSTR willTerminate provider=%s opt=0x%x\n",
-          provider ? provider->getMetaClass()->getClassName() : "(null)",
-          (unsigned)options);
+    char buf[160];
+    snprintf(buf, sizeof(buf), "provider=%s opt=0x%x",
+             provider ? provider->getMetaClass()->getClassName() : "(null)",
+             (unsigned)options);
+    instr_event("willTerminate", buf);
     return super::willTerminate(provider, options);
 }
 
 bool AirportItlwm::requestTerminate(IOService *provider, IOOptionBits options)
 {
-    XYLog("INSTR requestTerminate provider=%s opt=0x%x\n",
-          provider ? provider->getMetaClass()->getClassName() : "(null)",
-          (unsigned)options);
+    char buf[160];
+    snprintf(buf, sizeof(buf), "provider=%s opt=0x%x",
+             provider ? provider->getMetaClass()->getClassName() : "(null)",
+             (unsigned)options);
+    instr_event("requestTerminate", buf);
     return super::requestTerminate(provider, options);
 }
 
 bool AirportItlwm::didTerminate(IOService *provider, IOOptionBits options,
                                 bool *defer)
 {
-    XYLog("INSTR didTerminate provider=%s opt=0x%x defer=%p\n",
-          provider ? provider->getMetaClass()->getClassName() : "(null)",
-          (unsigned)options, defer);
+    char buf[160];
+    snprintf(buf, sizeof(buf), "provider=%s opt=0x%x defer=%p",
+             provider ? provider->getMetaClass()->getClassName() : "(null)",
+             (unsigned)options, defer);
+    instr_event("didTerminate", buf);
     return super::didTerminate(provider, options, defer);
 }
 
 bool AirportItlwm::terminate(IOOptionBits options)
 {
-    XYLog("INSTR terminate opt=0x%x\n", (unsigned)options);
+    char buf[64];
+    snprintf(buf, sizeof(buf), "opt=0x%x", (unsigned)options);
+    instr_event("terminate", buf);
     return super::terminate(options);
 }
 
@@ -1562,10 +1603,12 @@ IOReturn AirportItlwm::message(UInt32 type, IOService *provider, void *argument)
     case kIOMessageDeviceHasPoweredOn:         sym = "DeviceHasPoweredOn"; break;
     default: break;
     }
-    XYLog("INSTR message type=0x%x(%s) provider=%s arg=%p\n",
-          (unsigned)type, sym,
-          provider ? provider->getMetaClass()->getClassName() : "(null)",
-          argument);
+    char buf[200];
+    snprintf(buf, sizeof(buf), "type=0x%x(%s) provider=%s arg=%p",
+             (unsigned)type, sym,
+             provider ? provider->getMetaClass()->getClassName() : "(null)",
+             argument);
+    instr_event("message", buf);
     return super::message(type, provider, argument);
 }
 // ===== end Stage 5 diagnostic =====
