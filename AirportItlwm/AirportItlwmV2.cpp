@@ -613,29 +613,33 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
         bool initOK = stub->init();
         bool bindOK = initOK && stub->bindController(self);
         bool attachOK = bindOK && stub->attach(self);
-        // E3b reverted: stub->start(self) made Apple framework take over data
-        // path → ic_if redirected from bsdInterface (en3) to fNetIf wrap (en35),
-        // breaking BSD socket TX (Opkts stopped incrementing). Trade-off
-        // confirmed: with start() airportd uses IOUserClient but TX dies; without
-        // start() airportd falls back to BSD ioctl but TX works. Choose stable
-        // TX path. Skywalk wiring is the proper long-term fix (separate task).
-        XYLog("Path A v5: stub init=%d bind=%d attach=%d (start() skipped - D5b)\n",
-              initOK, bindOK, attachOK);
-        if (initOK && bindOK && attachOK) {
+        // Stage 5: re-add stub->start(self) so Apple framework completes the
+        // SkywalkInterface initialization (allocates ivars[0x350]/[0x358],
+        // populates [0x30],[0x38],[0xa8],[0xb8] etc.). This was the gating
+        // step that previously broke en3 BSD TX path because Apple took over
+        // ic_if. With Skywalk Stage 1+2+4 (TX action body + RX inject helper)
+        // now wired, the Apple-managed wrap interface (en35) carries real
+        // traffic through Skywalk pool/queue → kernel routing → userspace.
+        // Side effect we accept: en3 may stop carrying TX after Apple
+        // wrap-takeover; en35 handles it instead.
+        bool startOK = attachOK && stub->start(self);
+        XYLog("Path A v5+Stage5: init=%d bind=%d attach=%d start=%d\n",
+              initOK, bindOK, attachOK, startOK);
+        if (initOK && bindOK && attachOK && startOK) {
             stub->setProperty("IOInterfaceName", "en99");
             stub->setProperty("IO80211InterfaceRole", "Infrastructure");
-            // IOUserClientClass property REMOVED: without stub->start() the
-            // SkywalkInterface ivars are NULL, so any selector dispatch into
-            // IO80211APIUserClient deref's NULL+0x80 (createEventPipe panic
-            // CR2=0x80, IO80211Family @0x152de5, repeated x2 in tests). Forcing
-            // airportd to use BSD ioctl path (Apple80211BindToInterfaceWithIOCTL
-            // fallback) keeps the system stable. Skywalk path (with stub->start()
-            // + Skywalk packet pool wiring) is the proper long-term fix.
+            // IOUserClientClass: not setting on stub. With stub->start() done,
+            // ivars are populated so selector dispatch shouldn't NULL deref;
+            // BUT we leave property unset to keep airportd binding via the
+            // OTHER IO80211SkywalkInterface (fNetIf @ V2.cpp:1026 if it has the
+            // property — it does NOT in this build either). Simplest: only
+            // ALLOW IOUserClient open if Apple's framework auto-attaches
+            // (which it may, regardless of property).
             stub->setProperty("IO80211DriverVersion", "AirportItlwm 2.3.0");
             stub->setProperty("IO80211HardwareVersion", "AX201 1.0.0");
             stub->setProperty("FirmwareVersion", "1.0.0");
             stub->registerService();
-            XYLog("Path A v5: stub registered (no IOUserClientClass — BSD ioctl path forced)\n");
+            XYLog("Path A v5+Stage5: stub registered (start() done; Skywalk Stage 2+4 wired)\n");
         } else {
             stub->release();
             XYLog("Path A v5: stub init/bind/attach failed\n");
