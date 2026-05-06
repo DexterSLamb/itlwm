@@ -531,12 +531,18 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
         if (initOK && bindOK && attachOK) {
             stub->setProperty("IOInterfaceName", "en99");
             stub->setProperty("IO80211InterfaceRole", "Infrastructure");
-            stub->setProperty("IOUserClientClass", "IO80211APIUserClient");
+            // IOUserClientClass property REMOVED: without stub->start() the
+            // SkywalkInterface ivars are NULL, so any selector dispatch into
+            // IO80211APIUserClient deref's NULL+0x80 (createEventPipe panic
+            // CR2=0x80, IO80211Family @0x152de5, repeated x2 in tests). Forcing
+            // airportd to use BSD ioctl path (Apple80211BindToInterfaceWithIOCTL
+            // fallback) keeps the system stable. Skywalk path (with stub->start()
+            // + Skywalk packet pool wiring) is the proper long-term fix.
             stub->setProperty("IO80211DriverVersion", "AirportItlwm 2.3.0");
             stub->setProperty("IO80211HardwareVersion", "AX201 1.0.0");
             stub->setProperty("FirmwareVersion", "1.0.0");
             stub->registerService();
-            XYLog("Path A v5: stub registered (en99/Infrastructure/IO80211APIUserClient + DriverVersion props)\n");
+            XYLog("Path A v5: stub registered (no IOUserClientClass — BSD ioctl path forced)\n");
         } else {
             stub->release();
             XYLog("Path A v5: stub init/bind/attach failed\n");
