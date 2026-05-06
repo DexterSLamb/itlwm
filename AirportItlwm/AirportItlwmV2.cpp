@@ -520,17 +520,15 @@ static bool createBsdWlanIfnet(AirportItlwm *self, const u_int8_t mac[6]) {
         bool initOK = stub->init();
         bool bindOK = initOK && stub->bindController(self);
         bool attachOK = bindOK && stub->attach(self);
-        // Phase E3b: explicitly invoke Apple's IO80211SkywalkInterface::start(provider)
-        // so it allocates its 0x350/0x358 helper buffers and populates ivars[0x30],
-        // [0x38], [0xa8], [0xb8], etc. (verified via KDK 15.7.5 disassembly @
-        // 0x15199e). Without this, performGatedCommandIOUC NULL-derefs at sel=0
-        // (driver-version query) AND createEventPipe NULL-derefs ivars[0xa8] on
-        // a follow-up call. start() runs ~250 instructions of setup that we can't
-        // safely replicate by hand.
-        bool startOK = attachOK && stub->start(self);
-        XYLog("Path A v5: stub init=%d bind=%d attach=%d start=%d\n",
-              initOK, bindOK, attachOK, startOK);
-        if (initOK && bindOK && attachOK && startOK) {
+        // E3b reverted: stub->start(self) made Apple framework take over data
+        // path → ic_if redirected from bsdInterface (en3) to fNetIf wrap (en35),
+        // breaking BSD socket TX (Opkts stopped incrementing). Trade-off
+        // confirmed: with start() airportd uses IOUserClient but TX dies; without
+        // start() airportd falls back to BSD ioctl but TX works. Choose stable
+        // TX path. Skywalk wiring is the proper long-term fix (separate task).
+        XYLog("Path A v5: stub init=%d bind=%d attach=%d (start() skipped - D5b)\n",
+              initOK, bindOK, attachOK);
+        if (initOK && bindOK && attachOK) {
             stub->setProperty("IOInterfaceName", "en99");
             stub->setProperty("IO80211InterfaceRole", "Infrastructure");
             stub->setProperty("IOUserClientClass", "IO80211APIUserClient");
