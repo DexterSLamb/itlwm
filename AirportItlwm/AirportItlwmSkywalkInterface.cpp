@@ -874,35 +874,18 @@ getSUPPORTED_CHANNELS(struct apple80211_sup_channel_data *ad)
 {
     if (!ad)
         return kIOReturnError;
-#if __IO80211_TARGET >= __MAC_15_0
-    // RE diagnostic: dump first 32 bytes of `ad` AND its address BEFORE our
-    // writes. If kernel pre-fills with garbage / has different layout, we
-    // see it. After this we do nothing else (return success without writing
-    // anything) so num_channels stays whatever it was — so CoreWiFi reads
-    // exactly what the kernel-side caller passed us.
+    // Counter so we can verify from ioreg that the handler is reached now
+    // that V2.cpp NULLs the IO80211Glue → fallback path forces direct call
+    // to apple80211getSUPPORTED_CHANNELS → vtable[0xeb8] (our override).
     {
-        const uint8_t *p = (const uint8_t *)ad;
-        char buf[256];
-        // Snapshot first 32 bytes hex, plus pointer
-        snprintf(buf, sizeof(buf),
-                 "ad=%p pre32=%02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x",
-                 ad,
-                 p[0],p[1],p[2],p[3], p[4],p[5],p[6],p[7],
-                 p[8],p[9],p[10],p[11], p[12],p[13],p[14],p[15],
-                 p[16],p[17],p[18],p[19], p[20],p[21],p[22],p[23],
-                 p[24],p[25],p[26],p[27], p[28],p[29],p[30],p[31]);
         IOService *res = IOService::getResourceService();
         if (res) {
-            OSString *v = OSString::withCString(buf);
-            if (v) { res->setProperty("INSTR_supchan_pre", v); v->release(); }
+            OSNumber *prev = OSDynamicCast(OSNumber, res->getProperty("INSTR_supchan_calls"));
+            uint32_t v = prev ? prev->unsigned32BitValue() + 1 : 1;
+            OSNumber *n = OSNumber::withNumber(v, 32);
+            if (n) { res->setProperty("INSTR_supchan_calls", n); n->release(); }
         }
     }
-    // Return success but DO NOT WRITE ad. Goal: see what airportd/CoreWiFi
-    // actually receive when our handler is a no-op pass-through. If they
-    // still see num_channels=garbage, the data is being written by the
-    // kernel framework itself NOT by us.
-    return kIOReturnSuccess;
-#else
     ad->version = APPLE80211_VERSION;
     ad->num_channels = 0;
     struct ieee80211com *ic = fHalService->get80211Controller();
@@ -917,7 +900,6 @@ getSUPPORTED_CHANNELS(struct apple80211_sup_channel_data *ad)
         }
     }
     return kIOReturnSuccess;
-#endif
 }
 
 IOReturn AirportItlwmSkywalkInterface::
@@ -982,28 +964,17 @@ setDEAUTH(struct apple80211_deauth_data *da)
 IOReturn AirportItlwmSkywalkInterface::
 getMCS(struct apple80211_mcs_data* md)
 {
-#if __IO80211_TARGET >= __MAC_15_0
-    // Sequoia 15.7.5 (2026-05-07): kernel stack canary corruption observed
-    // in __ZL6getMCS (IO80211Family +0xFDCCD) at uptime 90s when airportd
-    // queries MCS. Apple's getMCS allocates an 8-byte stack buffer at
-    // -0x30(%rbp) for apple80211_mcs_data, with canary at -0x20 (16 bytes
-    // away). Our header struct is 8 bytes ({version, index}) and our
-    // handler writes exactly 8 bytes — should fit. Yet stack canary is
-    // corrupted on return (panic 2026-05-07-005037). Mechanism not yet
-    // pinned (could be sendIOUCToWcl response copy-back overflow on 15).
-    //
-    // Stub to Unsupported — mirrors setLQM/executeCommand stub pattern
-    // already proven for other handlers. wdutil/CoreWLAN handle Unsupported
-    // gracefully (treat as "MCS info unavailable", not fatal).
-    return kIOReturnUnsupported;
-#else
+    // Sequoia 15: stack canary panic earlier was sendIOUCToWcl writing back
+    // its own response (which is buggy on Intel hardware) to the 8-byte
+    // kernel stack buffer. With V2.cpp now NULLing iface->[0x110]->[0xd8]
+    // after start, sendIOUCToWcl is bypassed → fallback path calls our
+    // virtual method directly → safe 8-byte write to caller-provided buffer.
     struct ieee80211com *ic = fHalService->get80211Controller();
     if (ic->ic_state != IEEE80211_S_RUN ||  ic->ic_bss == NULL || !md)
         return 6;
     md->version = APPLE80211_VERSION;
     md->index = ic->ic_bss->ni_txmcs;
     return kIOReturnSuccess;
-#endif
 }
 
 IOReturn AirportItlwmSkywalkInterface::

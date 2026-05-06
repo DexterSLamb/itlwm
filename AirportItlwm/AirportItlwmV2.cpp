@@ -1450,6 +1450,50 @@ bool AirportItlwm::start(IOService *provider)
     fNetIf->start(this);
     TRACE_STEP("20_post_skywalkStart");
 
+#if __IO80211_TARGET >= __MAC_15_0
+    // ★ Sequoia 15.7.5 deep-RE breakthrough (Ghidra 2026-05-07) ★
+    //
+    // Apple's IO80211SkywalkInterface::start (KDK +0x15199e at ~line 270 of
+    // decompile) creates an IO80211Glue and stores at iface->[0x110]->[0xd8]:
+    //   if (iface->[0x110]->[0x58] == 1) {  // Infrastructure role
+    //       glue = IO80211Glue::withOptions(this);
+    //       iface->[0x110]->[0xd8] = glue;
+    //   }
+    //
+    // The Glue is the WCL (WiFi Configuration Layer) IPC bridge. ALL apple80211
+    // get*/set* dispatchers (apple80211getSUPPORTED_CHANNELS, getMCS, getLOCALE,
+    // etc.) check this pointer first:
+    //   if (iface->[0x110]->[0xd8] != NULL)
+    //       sendIOUCToWcl(glue, 0xc02869c9, req_type, buf, size, &flag)  // IPC
+    //   if (!flag || ret == 0xE082280F)
+    //       fallthrough to apple80211getXXX(iface, buf)  // ← OUR vtable[0xeb8]
+    //
+    // For our Intel driver, WCL daemon doesn't know about us — sendIOUCToWcl
+    // returns success+garbage, NOT 0xE082280F. So our handlers are bypassed
+    // and CoreWiFi gets corrupted data → SIGBUS in CWFApple80211 stack guard.
+    //
+    // Setting Glue ptr to NULL forces every apple80211 dispatcher to take the
+    // fallback path — calling our virtual methods directly. KDK reference:
+    //   - IO80211InfraInterface::updateCountryCodeProperty (+0x1c7f00)
+    //   - getSUPPORTED_CHANNELS dispatch (+0xfd134)
+    //   - getSupportedChannels dispatch (+0x18431b)
+    //
+    // We leak the Glue object (small, one-time). Acceptable trade-off vs.
+    // chasing freeResources side-effects.
+    {
+        char **ivarsP = (char **)((char *)fNetIf + 0x110);
+        char *ivars = *ivarsP;
+        if (ivars) {
+            *(void **)(ivars + 0xd8) = NULL;
+            TRACE_STEP("20a_glue_nulled");
+            IOService *res = IOService::getResourceService();
+            if (res) {
+                res->setProperty("INSTR_glue_nulled", "yes");
+            }
+        }
+    }
+#endif
+
     // Sequoia 15.7.5: BSDClient::start (KDK IOSkywalkFamily.kext) calls
     //   provider->vtable[0x958](&out)
     // to gate BSD ifnet attach. This slot maps to setInterfaceEnable's
