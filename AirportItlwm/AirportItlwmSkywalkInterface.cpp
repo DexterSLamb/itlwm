@@ -888,6 +888,19 @@ getSUPPORTED_CHANNELS(struct apple80211_sup_channel_data *ad)
     // apple80211 ioctls airportd issues and triage. If it STILL crashes,
     // the bug isn't a struct write — likely deeper in the dispatch path
     // (e.g., CoreWiFi reading some other reply that we're filling).
+    //
+    // Diagnostic: bump a counter in IOResources so we can tell from ioreg
+    // whether airportd actually reaches this Skywalk handler vs hits a
+    // different ioctl path entirely.
+    {
+        IOService *res = IOService::getResourceService();
+        if (res) {
+            OSNumber *prev = OSDynamicCast(OSNumber, res->getProperty("INSTR_skywalk_getSUPPORTED_CHANNELS"));
+            uint32_t v = prev ? prev->unsigned32BitValue() + 1 : 1;
+            OSNumber *n = OSNumber::withNumber(v, 32);
+            if (n) { res->setProperty("INSTR_skywalk_getSUPPORTED_CHANNELS", n); n->release(); }
+        }
+    }
     return kIOReturnUnsupported;
 #else
     if (!ad)

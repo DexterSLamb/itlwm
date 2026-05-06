@@ -342,6 +342,19 @@ static_assert(sizeof(macos_ifmediareq) == 44, "macos_ifmediareq must be 44 bytes
 static errno_t bsd_wlan_ioctl(ifnet_t ifp, unsigned long cmd, void *arg) {
     (void)ifp;
     XYLog("PathB bsd_wlan_ioctl cmd=0x%lx\n", cmd);
+#if __IO80211_TARGET >= __MAC_15_0
+    {
+        char b[96];
+        // For apple80211 ioctls, also capture req_type so we know which
+        // ioctl airportd is actually issuing on en99
+        unsigned rt = 0;
+        if ((cmd == 0xc02869c8UL || cmd == 0xc02869c9UL) && arg) {
+            rt = ((struct apple80211req *)arg)->req_type;
+        }
+        snprintf(b, sizeof(b), "cmd=0x%lx rt=%u", cmd, rt);
+        instr_event("bsd_wlan_ioctl", b);
+    }
+#endif
 
     if (cmd == MACOS_SIOCGIFMEDIA) {
         // 用 macos_ifmediareq layout (44 bytes packed) + 显式 macOS 数值
