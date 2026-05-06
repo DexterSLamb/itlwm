@@ -872,16 +872,29 @@ setDISASSOCIATE(struct apple80211_disassoc_data *ad)
 IOReturn AirportItlwmSkywalkInterface::
 getSUPPORTED_CHANNELS(struct apple80211_sup_channel_data *ad)
 {
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia 15.7.5 (Step 1 of GUI integration plan): return Unsupported.
+    // airportd's CWFApple80211::__supportedChannelsWithCountryCode SIGBUS'd
+    // on its stack guard page parsing our reply (5 reproductions across
+    // boots, including with cap+per-entry-version applied). Layout of
+    // apple80211_sup_channel_data / apple80211_channel on 15.7.5 differs
+    // from our header in some way we haven't pinned (CoreWiFi only on
+    // dyld shared cache, no on-disk binary). Mirror the executeCommand /
+    // performCommand "return Unsupported" stub pattern that already keeps
+    // Stage 5 stable: Apple framework handles Unsupported gracefully.
+    //
+    // If airportd no longer crashes after this, layout-mismatch hypothesis
+    // confirmed for the success path; we then enumerate which other
+    // apple80211 ioctls airportd issues and triage. If it STILL crashes,
+    // the bug isn't a struct write — likely deeper in the dispatch path
+    // (e.g., CoreWiFi reading some other reply that we're filling).
+    return kIOReturnUnsupported;
+#else
     if (!ad)
         return kIOReturnError;
     ad->version = APPLE80211_VERSION;
     ad->num_channels = 0;
     struct ieee80211com *ic = fHalService->get80211Controller();
-    // Cap at APPLE80211_MAX_CHANNELS (=128) — supported_channels[] is fixed
-    // size; without this airportd's CWFApple80211::__supportedChannelsWithCountryCode
-    // SIGBUS'd on stack guard page (exception 19:39+ on Sequoia 15.7.5).
-    // ieee80211_chan2ieee returns 1-based channel numbers; per-entry
-    // version is required by CoreWiFi or the iterator skips/misreads.
     for (int i = 0;
          i < IEEE80211_CHAN_MAX && ad->num_channels < APPLE80211_MAX_CHANNELS;
          i++) {
@@ -893,6 +906,7 @@ getSUPPORTED_CHANNELS(struct apple80211_sup_channel_data *ad)
         }
     }
     return kIOReturnSuccess;
+#endif
 }
 
 IOReturn AirportItlwmSkywalkInterface::
