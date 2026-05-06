@@ -1283,9 +1283,11 @@ bool AirportItlwm::start(IOService *provider)
     // 这里 force 重写, FindService("en99") 才能命中 fNetIf.
     fNetIf->setProperty("IOInterfaceName", "en99");
     fNetIf->setProperty("IO80211InterfaceRole", "Infrastructure");
-    fNetIf->setProperty("IOUserClientClass", "IO80211APIUserClient");
-    fNetIf->registerService();  // re-publish so matching pump sees property change
-    XYLog("Plan A: fNetIf re-published en99/Infrastructure/IO80211APIUserClient (after attach)\n");
+    // IOUserClientClass property REMOVED on fNetIf too (was on stub AND fNetIf).
+    // Same panic reason: any IO80211APIUserClient open → selector dispatch
+    // touches NULL skywalk ivars → CR2=0x80 panic in IO80211Family.
+    fNetIf->registerService();
+    XYLog("Plan A: fNetIf re-published en99/Infrastructure (no IOUserClientClass)\n");
 
     // Path B Phase 1: 在所有其他 setup 完成后, attach 我们自己的 BSD wifi ifnet.
     // H4 跳过 fNetIf->attach 已经避免 IO80211Family panic, 但 airportd 看不到我们.
