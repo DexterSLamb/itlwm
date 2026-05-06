@@ -1112,15 +1112,18 @@ getSUPPORTED_CHANNELS(OSObject *object, struct apple80211_sup_channel_data *ad)
     ad->version = APPLE80211_VERSION;
     ad->num_channels = 0;
     struct ieee80211com *ic = fHalService->get80211Controller();
-    for (int i = 0; i < IEEE80211_CHAN_MAX; i++) {
+    for (int i = 0;
+         i < IEEE80211_CHAN_MAX && ad->num_channels < APPLE80211_MAX_CHANNELS;
+         i++) {
         if (ic->ic_channels[i].ic_freq != 0) {
+            ad->supported_channels[ad->num_channels].version = APPLE80211_VERSION;
             ad->supported_channels[ad->num_channels].channel = ieee80211_chan2ieee(ic, &ic->ic_channels[i]);
 #if __IO80211_TARGET < __MAC_13_0
             ad->supported_channels[ad->num_channels].flags = ieeeChanFlag2apple(ic->ic_channels[i].ic_flags, -1);
 #else
             ad->supported_channels[ad->num_channels].flags = ieeeChanFlag2appleScanFlagVentura(ic->ic_channels[i].ic_flags);
 #endif
-            
+
             ad->num_channels++;
         }
     }

@@ -877,8 +877,16 @@ getSUPPORTED_CHANNELS(struct apple80211_sup_channel_data *ad)
     ad->version = APPLE80211_VERSION;
     ad->num_channels = 0;
     struct ieee80211com *ic = fHalService->get80211Controller();
-    for (int i = 0; i < IEEE80211_CHAN_MAX; i++) {
+    // Cap at APPLE80211_MAX_CHANNELS (=128) — supported_channels[] is fixed
+    // size; without this airportd's CWFApple80211::__supportedChannelsWithCountryCode
+    // SIGBUS'd on stack guard page (exception 19:39+ on Sequoia 15.7.5).
+    // ieee80211_chan2ieee returns 1-based channel numbers; per-entry
+    // version is required by CoreWiFi or the iterator skips/misreads.
+    for (int i = 0;
+         i < IEEE80211_CHAN_MAX && ad->num_channels < APPLE80211_MAX_CHANNELS;
+         i++) {
         if (ic->ic_channels[i].ic_freq != 0) {
+            ad->supported_channels[ad->num_channels].version = APPLE80211_VERSION;
             ad->supported_channels[ad->num_channels].channel = ieee80211_chan2ieee(ic, &ic->ic_channels[i]);
             ad->supported_channels[ad->num_channels].flags = ieeeChanFlag2appleScanFlagVentura(ic->ic_channels[i].ic_flags);
             ad->num_channels++;
