@@ -872,29 +872,40 @@ setDISASSOCIATE(struct apple80211_disassoc_data *ad)
 IOReturn AirportItlwmSkywalkInterface::
 getSUPPORTED_CHANNELS(struct apple80211_sup_channel_data *ad)
 {
-    // Sequoia 15.7.5 RE result (2026-05-07):
-    // airportd's previous CWFApple80211 SIGBUS was because Apple's framework
-    // matched on en6 wrap (IOSkywalkLegacyEthernetInterface) which is NOT
-    // an IO80211SkywalkInterface — its IOUserClient returned garbage on
-    // selector 0. After the setInterfaceEnable() patch (commit f459d5d) and
-    // SystemConfiguration cleanup, airportd discovered our fNetIf
-    // (id 0x329, en99) directly and now opens IO80211APIUserClient on us.
-    // Verified: 5 IO80211APIUserClient instances exist as children of our
-    // fNetIf in IORegistry; airportd has stable >18min uptime; wdutil info
-    // shows "Interface Name: en99" recognized as Wi-Fi by the system.
-    //
-    // Therefore the real getSUPPORTED_CHANNELS implementation is now safely
-    // reached via apple80211getSUPPORTED_CHANNELS → vtable[0xeb8] dispatch
-    // (KDK IO80211Family at 0xe7050+0x40). The IOUC garbage hypothesis is
-    // ruled out — return real channel data so wdutil/networksetup/GUI can
-    // populate correctly.
     if (!ad)
         return kIOReturnError;
+#if __IO80211_TARGET >= __MAC_15_0
+    // RE diagnostic: dump first 32 bytes of `ad` AND its address BEFORE our
+    // writes. If kernel pre-fills with garbage / has different layout, we
+    // see it. After this we do nothing else (return success without writing
+    // anything) so num_channels stays whatever it was — so CoreWiFi reads
+    // exactly what the kernel-side caller passed us.
+    {
+        const uint8_t *p = (const uint8_t *)ad;
+        char buf[256];
+        // Snapshot first 32 bytes hex, plus pointer
+        snprintf(buf, sizeof(buf),
+                 "ad=%p pre32=%02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x %02x%02x%02x%02x",
+                 ad,
+                 p[0],p[1],p[2],p[3], p[4],p[5],p[6],p[7],
+                 p[8],p[9],p[10],p[11], p[12],p[13],p[14],p[15],
+                 p[16],p[17],p[18],p[19], p[20],p[21],p[22],p[23],
+                 p[24],p[25],p[26],p[27], p[28],p[29],p[30],p[31]);
+        IOService *res = IOService::getResourceService();
+        if (res) {
+            OSString *v = OSString::withCString(buf);
+            if (v) { res->setProperty("INSTR_supchan_pre", v); v->release(); }
+        }
+    }
+    // Return success but DO NOT WRITE ad. Goal: see what airportd/CoreWiFi
+    // actually receive when our handler is a no-op pass-through. If they
+    // still see num_channels=garbage, the data is being written by the
+    // kernel framework itself NOT by us.
+    return kIOReturnSuccess;
+#else
     ad->version = APPLE80211_VERSION;
     ad->num_channels = 0;
     struct ieee80211com *ic = fHalService->get80211Controller();
-    // Cap at APPLE80211_MAX_CHANNELS (=128) defensively even though typical
-    // Intel cards report ≪50 channels — supported_channels[] is fixed size.
     for (int i = 0;
          i < IEEE80211_CHAN_MAX && ad->num_channels < APPLE80211_MAX_CHANNELS;
          i++) {
@@ -906,6 +917,7 @@ getSUPPORTED_CHANNELS(struct apple80211_sup_channel_data *ad)
         }
     }
     return kIOReturnSuccess;
+#endif
 }
 
 IOReturn AirportItlwmSkywalkInterface::
