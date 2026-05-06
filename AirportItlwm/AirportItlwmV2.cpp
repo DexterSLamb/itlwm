@@ -1450,6 +1450,49 @@ bool AirportItlwm::start(IOService *provider)
     fNetIf->start(this);
     TRACE_STEP("20_post_skywalkStart");
 
+    // Sequoia 15.7.5: BSDClient::start (KDK IOSkywalkFamily.kext) calls
+    //   provider->vtable[0x958](&out)
+    // to gate BSD ifnet attach. This slot maps to setInterfaceEnable's
+    // companion getter; without the interface being explicitly enabled
+    // first, the gate returns "disabled" and BSDClient bails.
+    // Result: fNetIf has IOInterfaceUnit=8 (per ioreg), no IODeferBSDAttach,
+    // but BSD ifnet never appears (ifconfig en8/en99 → "does not exist").
+    // This breaks airportd: Apple80211BindToInterface(en99) →
+    //   IOServiceGetMatchingService({IOPropertyMatch:{BSD Name:en99}})
+    // returns NULL because en99 isn't in IORegistry as IOService. airportd
+    // then falls back to en4 (Apple's auto-wrap IOSkywalkLegacyEthernet
+    // Interface) whose default IOUserClient returns garbage from
+    // IOConnectCallStructMethod for SUPPORTED_CHANNELS — CoreWiFi reads
+    // num_channels = huge, iterates → stack guard SIGBUS, crash loop.
+    //
+    // KDK trace: IOSkywalkNetworkBSDClient::openInterface @ +0x5534
+    //   movq (%r15), %rax       ; vtable
+    //   leaq -0x1c(%rbp), %rsi  ; out param init=0
+    //   movl $0x0, (%rsi)
+    //   callq *0x958(%rax)
+    //   testl %eax, %eax        ; ret != 0 → bail
+    //   jne   0x55a1
+    //   testb $0x1, -0x1c(%rbp) ; (*out & 1) == 0 → bail
+    //   je    0x55a1
+    //
+    // Patch: call setInterfaceEnable(true) before deferBSDAttach(false) so
+    // the framework's internal "is enabled" state is set, vtable[0x958]
+    // returns success, and BSDClient::openInterface progresses past the gate.
+    // AirportItlwmSkywalkInterface::setInterfaceEnable already exists and
+    // delegates to IO80211InfraInterface parent + reports link-status on
+    // success.
+    {
+        SInt32 enRet = fNetIf->setInterfaceEnable(true);
+        TRACE_STEP("20a_post_setInterfaceEnable");
+        IOService *res = IOService::getResourceService();
+        if (res) {
+            char b[64];
+            snprintf(b, sizeof(b), "ret=%d", enRet);
+            OSString *v = OSString::withCString(b);
+            if (v) { res->setProperty("INSTR_setInterfaceEnable", v); v->release(); }
+        }
+    }
+
     // Trigger BSD ifnet publication via IOSkywalkNetworkBSDClient matching.
     // deferBSDAttach(false) clears the IODeferBSDAttach property and
     // re-registers the service so BSDClient can create the nexus channel
