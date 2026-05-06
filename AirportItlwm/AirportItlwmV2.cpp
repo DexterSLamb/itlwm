@@ -1483,13 +1483,27 @@ bool AirportItlwm::start(IOService *provider)
     {
         char **ivarsP = (char **)((char *)fNetIf + 0x110);
         char *ivars = *ivarsP;
+        char buf[256];
+        snprintf(buf, sizeof(buf),
+                 "fNetIf=%p ivars(@+0x110)=%p glue(@+0xd8)pre=%p",
+                 fNetIf, ivars,
+                 ivars ? *(void **)(ivars + 0xd8) : (void *)0xDEAD1);
+        IOService *res = IOService::getResourceService();
+        if (res) {
+            OSString *v = OSString::withCString(buf);
+            if (v) { res->setProperty("INSTR_glue_pre", v); v->release(); }
+        }
         if (ivars) {
             *(void **)(ivars + 0xd8) = NULL;
-            TRACE_STEP("20a_glue_nulled");
-            IOService *res = IOService::getResourceService();
+            // Verify the write took effect
+            void *post = *(void **)(ivars + 0xd8);
+            snprintf(buf, sizeof(buf), "glue_post=%p", post);
             if (res) {
+                OSString *v = OSString::withCString(buf);
+                if (v) { res->setProperty("INSTR_glue_post", v); v->release(); }
                 res->setProperty("INSTR_glue_nulled", "yes");
             }
+            TRACE_STEP("20a_glue_nulled");
         }
     }
 #endif
