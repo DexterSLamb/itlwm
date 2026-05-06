@@ -872,42 +872,29 @@ setDISASSOCIATE(struct apple80211_disassoc_data *ad)
 IOReturn AirportItlwmSkywalkInterface::
 getSUPPORTED_CHANNELS(struct apple80211_sup_channel_data *ad)
 {
-#if __IO80211_TARGET >= __MAC_15_0
-    // Sequoia 15.7.5 (Step 1 of GUI integration plan): return Unsupported.
-    // airportd's CWFApple80211::__supportedChannelsWithCountryCode SIGBUS'd
-    // on its stack guard page parsing our reply (5 reproductions across
-    // boots, including with cap+per-entry-version applied). Layout of
-    // apple80211_sup_channel_data / apple80211_channel on 15.7.5 differs
-    // from our header in some way we haven't pinned (CoreWiFi only on
-    // dyld shared cache, no on-disk binary). Mirror the executeCommand /
-    // performCommand "return Unsupported" stub pattern that already keeps
-    // Stage 5 stable: Apple framework handles Unsupported gracefully.
+    // Sequoia 15.7.5 RE result (2026-05-07):
+    // airportd's previous CWFApple80211 SIGBUS was because Apple's framework
+    // matched on en6 wrap (IOSkywalkLegacyEthernetInterface) which is NOT
+    // an IO80211SkywalkInterface — its IOUserClient returned garbage on
+    // selector 0. After the setInterfaceEnable() patch (commit f459d5d) and
+    // SystemConfiguration cleanup, airportd discovered our fNetIf
+    // (id 0x329, en99) directly and now opens IO80211APIUserClient on us.
+    // Verified: 5 IO80211APIUserClient instances exist as children of our
+    // fNetIf in IORegistry; airportd has stable >18min uptime; wdutil info
+    // shows "Interface Name: en99" recognized as Wi-Fi by the system.
     //
-    // If airportd no longer crashes after this, layout-mismatch hypothesis
-    // confirmed for the success path; we then enumerate which other
-    // apple80211 ioctls airportd issues and triage. If it STILL crashes,
-    // the bug isn't a struct write — likely deeper in the dispatch path
-    // (e.g., CoreWiFi reading some other reply that we're filling).
-    //
-    // Diagnostic: bump a counter in IOResources so we can tell from ioreg
-    // whether airportd actually reaches this Skywalk handler vs hits a
-    // different ioctl path entirely.
-    {
-        IOService *res = IOService::getResourceService();
-        if (res) {
-            OSNumber *prev = OSDynamicCast(OSNumber, res->getProperty("INSTR_skywalk_getSUPPORTED_CHANNELS"));
-            uint32_t v = prev ? prev->unsigned32BitValue() + 1 : 1;
-            OSNumber *n = OSNumber::withNumber(v, 32);
-            if (n) { res->setProperty("INSTR_skywalk_getSUPPORTED_CHANNELS", n); n->release(); }
-        }
-    }
-    return kIOReturnUnsupported;
-#else
+    // Therefore the real getSUPPORTED_CHANNELS implementation is now safely
+    // reached via apple80211getSUPPORTED_CHANNELS → vtable[0xeb8] dispatch
+    // (KDK IO80211Family at 0xe7050+0x40). The IOUC garbage hypothesis is
+    // ruled out — return real channel data so wdutil/networksetup/GUI can
+    // populate correctly.
     if (!ad)
         return kIOReturnError;
     ad->version = APPLE80211_VERSION;
     ad->num_channels = 0;
     struct ieee80211com *ic = fHalService->get80211Controller();
+    // Cap at APPLE80211_MAX_CHANNELS (=128) defensively even though typical
+    // Intel cards report ≪50 channels — supported_channels[] is fixed size.
     for (int i = 0;
          i < IEEE80211_CHAN_MAX && ad->num_channels < APPLE80211_MAX_CHANNELS;
          i++) {
@@ -919,7 +906,6 @@ getSUPPORTED_CHANNELS(struct apple80211_sup_channel_data *ad)
         }
     }
     return kIOReturnSuccess;
-#endif
 }
 
 IOReturn AirportItlwmSkywalkInterface::
