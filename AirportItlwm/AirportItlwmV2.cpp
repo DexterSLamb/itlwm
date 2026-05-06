@@ -1649,23 +1649,35 @@ void *AirportItlwm::getFaultReporterFromDriver()
 #endif
 
 #if __IO80211_TARGET >= __MAC_15_0
-// Force our AirportItlwm vtable slot 268 (executeCommand) to be a real
-// function pointer to OUR symbol. kxld is supposed to fill this slot from
-// IONetworkController parent at load time, but Sequoia evidence (panic NX
-// fault @ IO80211InfraProtocol::gMetaClass when configd's BSD ioctl chain
-// dispatched ctrl->vtable[0x850]) shows the resolution went wrong for
-// us — the slot ended up pointing at OSMetaClass data instead of code.
-// By providing our own override, slot 268 is owned by us in the on-disk
-// vtable and kxld doesn't need to fill it. Body just forwards to super.
-// Documented in docs/static-analysis/decompile-keyfuncs.txt.
+// Sequoia 15.7.5: short-circuit the IONetworkController::executeCommand
+// chain entirely. Forwarding to super:: panics ~11min into uptime with
+// Kernel NX fault — IO80211Family/Apple framework calls our entry point
+// (IONetworkingFamily+0xE04D → AirportItlwm::executeCommand+0x61) with
+// an `action` function pointer that resolves through Apple's wrap path
+// to a DATA segment address (IO80211Family +0x2E7CA0). super::execute
+// CommandAction then dispatches `(*(code*)param_2[2])(...)` and panics.
+// Repro panics: 12:08:36 (uptime 11.1m), 19:39:54 (uptime 11.1m).
+//
+// Pattern matches the AirportItlwmEthernetInterface::performCommand stub
+// (returns kIOReturnUnsupported) — the V2 ioctl chain on Sequoia 15 is
+// already #if'd out (apple80211_ioctl, apple80211SkywalkRequest are
+// __MAC_15_0-guarded out), so synchronous executeCommand calls have no
+// legitimate payload anyway. Apple's framework periodic poll has no
+// useful side effect; returning Unsupported drops it cleanly.
+//
+// INSTR property is written first so we get visibility on the caller
+// frequency before the (now harmless) early return.
 IOReturn AirportItlwm::executeCommand(OSObject *client,
                                       IONetworkController::Action action,
                                       void *target,
                                       void *param0, void *param1,
                                       void *param2, void *param3)
 {
-    return super::executeCommand(client, action, target,
-                                 param0, param1, param2, param3);
+    char buf[160];
+    snprintf(buf, sizeof(buf), "client=%p action=%p target=%p p0=%p",
+             client, (void *)action, target, param0);
+    instr_event("executeCommand", buf);
+    return kIOReturnUnsupported;
 }
 #endif
 
