@@ -23,6 +23,8 @@ public:
     UInt32 getDataOff() const;
     // T: __ZN21IOSkywalkPacketBuffer13setDataLengthEj
     IOReturn setDataLength(UInt32 length);
+    // T: __ZNK21IOSkywalkPacketBuffer13getDataLengthEv
+    UInt32 getDataLength() const;
 };
 
 #endif /* _AIRPORT_IOSKYWALKPACKETBUFFER_H */

@@ -179,30 +179,88 @@ bool resolveSequoiaShimSymbols(void)
 // different mangling ("PFi..." vs "PFj..."), and Apple only exports the "j"
 // variant. Returning IOReturn left withPool unresolved -> driver silently
 // not loaded.
-// Stage 1 Skywalk TX action — observability only. Apple framework calls
-// this when it has packets ready for the driver. We don't yet enqueue
-// anything to iwm — just log so we can confirm Apple is dispatching here.
-// Returns 0 (= "consumed 0 packets") so Apple holds them and retries.
-// Stage 2 will replace return 0 with real iwm enqueue + return count.
+// Stage 2 Skywalk TX action — real iwm enqueue.
+// Apple framework calls us when it has packets ready. For each packet:
+//   1. Walk to the kernel virtual address of the packet bytes
+//   2. Build an mbuf, copy the bytes into it
+//   3. Enqueue mbuf on iwm's ic_if.if_snd queue
+//   4. Trigger ifp->if_start to drain the queue (iwm_start)
+//   5. Release the Skywalk packet back to the pool via completeWithQueue
+// Returns count of successfully consumed packets so Apple advances its
+// ring index past them. If iwm enters oactive mid-batch we return short
+// count and Apple retries the rest on next checkForWork tick.
 static unsigned int
 skywalkTxAction(OSObject *owner, IOSkywalkTxSubmissionQueue *queue,
                 IOSkywalkPacket * const *packets, UInt32 count, void *refCon)
 {
-    (void)owner; (void)queue; (void)refCon;
-    XYLog("Skywalk TX: action called count=%u\n", (unsigned)count);
-    for (UInt32 i = 0; i < count && i < 4; i++) {
+    (void)refCon;
+    AirportItlwm *self = OSDynamicCast(AirportItlwm, owner);
+    if (!self || !self->fHalService || count == 0) return 0;
+
+    struct ieee80211com *ic = self->fHalService->get80211Controller();
+    if (!ic || ic->ic_state != IEEE80211_S_RUN) {
+        // Not associated — drop everything by reporting consumed (Apple
+        // releases packets); this matches V1 outputPacket behavior.
+        for (UInt32 i = 0; i < count; i++) {
+            if (packets[i])
+                packets[i]->completeWithQueue((IOSkywalkPacketQueue *)queue, 0, 0);
+        }
+        return count;
+    }
+
+    struct _ifnet *ifp = &ic->ic_ac.ac_if;
+    UInt32 consumed = 0;
+    for (UInt32 i = 0; i < count; i++) {
         IOSkywalkPacket *pkt = packets[i];
-        if (!pkt) { XYLog("  pkt[%u] = NULL\n", i); continue; }
+        if (!pkt) { consumed++; continue; }
+
         IOSkywalkPacketBuffer *pb = NULL;
         UInt32 nbufs = pkt->getPacketBuffers(&pb, 1);
-        UInt32 dataOff = pb ? pb->getDataOff() : 0;
-        UInt64 segOff  = pb ? pb->getMemorySegmentOffset() : 0;
-        IOSkywalkMemorySegment *seg = pb ? pb->getMemorySegment() : NULL;
-        UInt64 segVA   = seg ? seg->getVirtualAddress() : 0;
-        XYLog("  pkt[%u]=%p nbufs=%u pb=%p dataOff=%u segOff=%llu segVA=0x%llx\n",
-              i, pkt, nbufs, pb, dataOff, segOff, segVA);
+        if (nbufs == 0 || !pb) {
+            pkt->completeWithQueue((IOSkywalkPacketQueue *)queue, 0, 0);
+            consumed++;
+            continue;
+        }
+
+        IOSkywalkMemorySegment *seg = pb->getMemorySegment();
+        UInt64 segVA = seg ? seg->getVirtualAddress() : 0;
+        UInt64 segOff = pb->getMemorySegmentOffset();
+        UInt32 dataOff = pb->getDataOff();
+        UInt32 dataLen = pb->getDataLength();
+        if (segVA == 0 || dataLen == 0 || dataLen > 1500 + 14) {
+            // Sanity: skip clearly bad descriptors
+            pkt->completeWithQueue((IOSkywalkPacketQueue *)queue, 0, 0);
+            consumed++;
+            continue;
+        }
+        const void *kva = (const uint8_t *)(uintptr_t)(segVA + segOff + dataOff);
+
+        // Build mbuf with packet header, copy frame bytes in.
+        mbuf_t m = NULL;
+        if (mbuf_allocpacket(MBUF_DONTWAIT, dataLen, NULL, &m) != 0 || !m) {
+            // Allocation failed — return short, Apple holds remaining
+            break;
+        }
+        if (mbuf_copyback(m, 0, dataLen, kva, MBUF_DONTWAIT) != 0) {
+            mbuf_freem(m);
+            pkt->completeWithQueue((IOSkywalkPacketQueue *)queue, 0, 0);
+            consumed++;
+            continue;
+        }
+        mbuf_pkthdr_setlen(m, dataLen);
+
+        // Enqueue + kick. lockEnqueue returns true on success.
+        if (!ifp->if_snd.queue || !ifp->if_snd.queue->lockEnqueue(m)) {
+            mbuf_freem(m);
+            // oactive / queue-full — return short consumed
+            break;
+        }
+        (*ifp->if_start)(ifp);
+
+        pkt->completeWithQueue((IOSkywalkPacketQueue *)queue, 0, 0);
+        consumed++;
     }
-    return 0;
+    return consumed;
 }
 
 // Stage 1 Skywalk RX completion action — observability only. Apple calls
