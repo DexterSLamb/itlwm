@@ -157,12 +157,39 @@ typedef IOReturn (*supchan_t)(void *iface, void *data);
 static volatile uint32_t gSupchanLogCount = 0;
 static const uint32_t kSupchanLogMax = 8;
 
-// Helper to publish a uint64 to IOResources as OSData (8 bytes).
+// v4 lifecycle markers: set bit in g_lifecycle_bits when stage runs, then flush
+// to IOResources whenever a publish helper is called. Bits:
+//   0  init-entered
+//   1  skywalk-reg-ok
+//   2  io80211-reg-ok
+//   3  onPatcherLoad-reg-ok
+//   4  init-completed
+//   5  onKextLoad-skywalk-fired
+//   6  onKextLoad-io80211-fired
+//   7  onPatcherLoad-callback-fired (= patchAirportItlwmVtable entry)
+//   8  pAiv-aiIdx-resolved
+//   9  pAiv-vtAddr-resolved
+//  10  pAiv-controllerSlots-attempted
+//  11  pAiv-io80211Idx-resolved
+//  12  pAiv-supSym-resolved
+//  13  pAiv-supRoute-installed
+//  14  pAiv-completed
+static volatile uint64_t g_lifecycle_bits = 0;
+static inline void setLifeBit(int b) {
+    __c11_atomic_fetch_or(reinterpret_cast<volatile _Atomic uint64_t *>(&g_lifecycle_bits), 1ULL << b, __ATOMIC_RELAXED);
+}
+
+// Helper to publish a uint64 to IOResources as OSData (8 bytes). Always also
+// flushes the lifecycle bitmap so we know how far Shim got even if a later
+// publish failed.
 static void supchanPublishU64(const char *key, uint64_t val) {
     auto res = IOService::getResourceService();
     if (!res) return;
     auto data = OSData::withBytes(&val, sizeof(val));
     if (data) { res->setProperty(key, data); data->release(); }
+    uint64_t bits = g_lifecycle_bits;
+    auto bdata = OSData::withBytes(&bits, sizeof(bits));
+    if (bdata) { res->setProperty("AirportItlwm-Shim-life-bits", bdata); bdata->release(); }
 }
 // Helper to publish a C string to IOResources.
 static void supchanPublishStr(const char *key, const char *val) {
@@ -170,6 +197,9 @@ static void supchanPublishStr(const char *key, const char *val) {
     if (!res || !val) return;
     auto str = OSString::withCString(val);
     if (str) { res->setProperty(key, str); str->release(); }
+    uint64_t bits = g_lifecycle_bits;
+    auto bdata = OSData::withBytes(&bits, sizeof(bits));
+    if (bdata) { res->setProperty("AirportItlwm-Shim-life-bits", bdata); bdata->release(); }
 }
 
 static IOReturn my_supchan(void *iface, void *data)
@@ -240,6 +270,7 @@ static AirportItlwmShimPlugin ADDPR(plugin);
 bool AirportItlwmShimPlugin::init()
 {
     DBGLOG("aishim", "init starting");
+    setLifeBit(0);  // init-entered
 
     // Prefer non-Force variant so a registration failure (e.g. SIP-related
     // kext-list refresh races) is reported rather than panicking.
@@ -251,6 +282,7 @@ bool AirportItlwmShimPlugin::init()
         SYSLOG("aishim", "onKextLoad(skywalk) failed: %d", err);
         return false;
     }
+    setLifeBit(1);  // skywalk-reg-ok
 
     err = lilu.onKextLoad(&gIO80211Kext, 1,
         [](void *user, KernelPatcher &kp, size_t idx, mach_vm_address_t addr, size_t size) {
@@ -260,6 +292,7 @@ bool AirportItlwmShimPlugin::init()
         SYSLOG("aishim", "onKextLoad(io80211) failed: %d", err);
         return false;
     }
+    setLifeBit(2);  // io80211-reg-ok
 
     // Plan A core: vtable-patch AirportItlwm class slots after kxld layout.
     // OC injects AirportItlwm at boot before Lilu's onKextLoad fires, so use
@@ -272,6 +305,9 @@ bool AirportItlwmShimPlugin::init()
         SYSLOG("aishim", "onPatcherLoad failed: %d", err);
         return false;
     }
+    setLifeBit(3);  // onPatcherLoad-reg-ok
+
+    setLifeBit(4);  // init-completed
 
     // Conditionally register IONetworkingFamily for trace hooks
     if (gTraceEnabled) {
@@ -328,6 +364,9 @@ void AirportItlwmShimPlugin::onKextLoad(KernelPatcher &kp, size_t idx,
                                   mach_vm_address_t addr, size_t size)
 {
     (void)addr; (void)size;
+
+    if (idx == gSkywalkKext.loadIndex) setLifeBit(5);
+    else if (idx == gIO80211Kext.loadIndex) setLifeBit(6);
 
     if (idx == gSkywalkKext.loadIndex) {
         if (!txWithPool) {
@@ -394,7 +433,7 @@ void AirportItlwmShimPlugin::onKextLoad(KernelPatcher &kp, size_t idx,
 
 void AirportItlwmShimPlugin::patchAirportItlwmVtable(KernelPatcher &kp)
 {
-    // Stage 1 v3 marker: prove this callback fired.
+    setLifeBit(7);  // onPatcherLoad-callback-fired
     supchanPublishStr("AirportItlwm-supchan-pPv-entered", "yes");
 
     // Find AirportItlwm kext (loaded by OC at boot, so already in patcher's kinfos).
@@ -406,14 +445,18 @@ void AirportItlwmShimPlugin::patchAirportItlwmVtable(KernelPatcher &kp)
         SYSLOG("aishim", "AirportItlwm kext not found in patcher kinfos");
         return;
     }
+    setLifeBit(8);  // pAiv-aiIdx-resolved
     kprintf("[aishim] AirportItlwm loadIndex=%zu\n", idx);
 
     auto vtableAddr = kp.solveSymbol(idx, "__ZTV12AirportItlwm");
     kp.clearError();
+    supchanPublishU64("AirportItlwm-supchan-pPv-vtAddr", vtableAddr);
     if (!vtableAddr) {
+        supchanPublishStr("AirportItlwm-supchan-pPv-status", "vtAddr-resolve-failed");
         SYSLOG("aishim", "_ZTV12AirportItlwm not resolvable");
         return;
     }
+    setLifeBit(9);  // pAiv-vtAddr-resolved
 
     // Plan A vtable patch: align our overrides to Apple's expected slots in
     // IO80211Controller. Our compile lays them out off-by-2 (header chain has
@@ -455,6 +498,7 @@ void AirportItlwmShimPlugin::patchAirportItlwmVtable(KernelPatcher &kp)
             SYSLOG("aishim", "vtable[%u] setKernelWriting fail", s.slot);
         }
     }
+    setLifeBit(10); // pAiv-controllerSlots-attempted
 
     // Stage 1 v2: install diagnostic hook on apple80211getSUPPORTED_CHANNELS.
     // Use loadKinfo path (NOT path-based onKextLoad) because IO80211FamilyV2
@@ -468,6 +512,7 @@ void AirportItlwmShimPlugin::patchAirportItlwmVtable(KernelPatcher &kp)
         supchanPublishStr("AirportItlwm-supchan-status", "io80211-loadKinfo-failed");
         return;
     }
+    setLifeBit(11); // pAiv-io80211Idx-resolved
     auto wrapperSym = kp.solveSymbol(io80211Idx,
         "__Z31apple80211getSUPPORTED_CHANNELSP23IO80211SkywalkInterfaceP27apple80211_sup_channel_data");
     kp.clearError();
@@ -476,16 +521,20 @@ void AirportItlwmShimPlugin::patchAirportItlwmVtable(KernelPatcher &kp)
         supchanPublishStr("AirportItlwm-supchan-status", "wrapper-symbol-not-resolved");
         return;
     }
+    setLifeBit(12); // pAiv-supSym-resolved
     gOrig_supchan = kp.routeFunction(wrapperSym,
         reinterpret_cast<mach_vm_address_t>(my_supchan),
         /*buildWrapper*/ true, /*kernelRoute*/ true);
     kp.clearError();
     supchanPublishU64("AirportItlwm-supchan-orig", gOrig_supchan);
     if (gOrig_supchan) {
+        setLifeBit(13); // pAiv-supRoute-installed
         supchanPublishStr("AirportItlwm-supchan-status", "installed");
     } else {
         supchanPublishStr("AirportItlwm-supchan-status", "routeFunction-failed");
     }
+    setLifeBit(14); // pAiv-completed
+    supchanPublishStr("AirportItlwm-supchan-pPv-completed", "yes");
 }
 
 // ============================================================================
