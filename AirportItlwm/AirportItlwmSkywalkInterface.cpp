@@ -619,15 +619,35 @@ getOP_MODE(struct apple80211_opmode_data *od)
 IOReturn AirportItlwmSkywalkInterface::
 getTXPOWER(struct apple80211_txpower_data *txd)
 {
-    struct ieee80211com *ic = fHalService->get80211Controller();
-    if (ic->ic_state == IEEE80211_S_RUN) {
-        memset(txd, 0, sizeof(*txd));
-        txd->version = APPLE80211_VERSION;
-        txd->txpower = ic->ic_txpower;
-        txd->txpower_unit = APPLE80211_UNIT_PERCENT;
-        return kIOReturnSuccess;
-    }
-    return 6;
+    // CRITICAL Sequoia 15 dual-purpose fix:
+    //
+    // Our InfraProtocol vtable layout puts getTXPOWER at byte offset 0xeb8.
+    // Apple's IO80211Family on 15.x hard-codes apple80211getSUPPORTED_CHANNELS
+    // dispatch to vtable[0xeb8], expecting struct apple80211_sup_channel_data*
+    // (version u32 + num_channels u32 + supported_channels[256]). Our handler
+    // gets called with that buffer but interprets it as apple80211_txpower_data*.
+    //
+    // Field overlap (txpower_data view vs sup_channel_data view):
+    //   txd->version  → sup_chan->version       (both want APPLE80211_VERSION ✓)
+    //   txd->txpower  → sup_chan->num_channels  (CRITICAL: must be 0!)
+    //
+    // If we put real txpower (e.g. 14 dBm) here, airportd's
+    // __supportedChannelsWithCountryCode iterates 14 uninitialized
+    // apple80211_channel structs and SIGBUSes ~30s post-boot.
+    //
+    // Forcing txpower=0 makes both consumers safe:
+    //   - real TXPOWER readers see 0 dBm (cosmetic — wrong but stable)
+    //   - SUPPORTED_CHANNELS readers see num_channels=0 (no iteration → no SIGBUS)
+    //
+    // Real TXPOWER queries via Apple's wrapper actually go to vtable[0xe98]
+    // which in our layout is getSSID anyway, so this method's return is
+    // already moot for them.
+    if (!txd) return kIOReturnError;
+    memset(txd, 0, sizeof(*txd));
+    txd->version = APPLE80211_VERSION;
+    txd->txpower = 0;  // KEEP ZERO — see comment above; do not restore ic_txpower
+    txd->txpower_unit = APPLE80211_UNIT_PERCENT;
+    return kIOReturnSuccess;
 }
 
 IOReturn AirportItlwmSkywalkInterface::
