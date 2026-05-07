@@ -1019,69 +1019,79 @@ getSUPPORTED_CHANNELS(struct apple80211_sup_channel_data *ad)
         return kIOReturnError;
 
 #if __IO80211_TARGET >= __MAC_15_0
-    // Phase 3.6 RA-detect: vtable[0xeb8] is reached from THREE Sequoia 15
-    // call sites (verified KDK 15.7.4 / static analysis):
-    //   (1) apple80211getSUPPORTED_CHANNELS @ +0xe7050 — `jmpq *%rax` after
-    //       `movq 0xeb8(%rax), %rax`. Buffer is 4824B apple80211_sup_channel_data.
-    //   (2) IO80211PeerManager::unflowControlStack @ +0xd2e5e — `callq *0xeb8(%rax)`.
-    //       NO buffer; rsi holds garbage from earlier register usage.
-    //   (3) IO80211PeerManager::printState @ +0xd94d5 — `callq *0xeb8(%rax)`.
-    //       Same NO-buffer pattern.
-    // Sites (2)(3) come from PeerManager dispatching on a SkywalkInterface
-    // descendant — IO80211VirtualInterface inherits from IO80211SkywalkInterface
-    // (verified via __ZN23IO80211VirtualInterface9MetaClassC2Ev which passes
-    // IO80211SkywalkInterface::gMetaClass as parent). At runtime the object
-    // can be ANY SkywalkInterface descendant including ours.
+    // Phase 3.6 D-mode: vtable[0xeb8] is hit by MULTIPLE callers in Sequoia 15
+    // (apple80211 wrapper + 2+ internal IO80211 dispatch sites). Some pass NO
+    // buffer arg → rsi=garbage. Earlier RA-detect (8dbb05f) failed because the
+    // panicking caller didn't match the `callq *0xeb8(%reg)` byte pattern.
     //
-    // Detect via instruction byte pattern at the return address:
-    //   `callq *disp32(%reg)` form: ff 9? b8 0e 00 00  (6 bytes, RA points
-    //   right after the last 0x00). The disp32 0x00000eb8 = 0xeb8 little-endian
-    //   gives the four bytes b8 0e 00 00.
-    // apple80211getSUPPORTED_CHANNELS uses `jmpq *%rax` (3 bytes) NOT a
-    // callq-with-displacement, so its RA does NOT match this pattern.
-    //
-    // SAFETY: if we cannot read the bytes (RA in unmapped page) or the
-    // pattern is ambiguous, default to the SAFE 8-byte write.
+    // D-mode strategy: ALWAYS write only the 8-byte safe-minimum (version +
+    // num_channels=0) regardless of caller, AND log every distinct RA we see
+    // to ioreg as forensic. Once we collect all callers, design Phase 3.7
+    // full-alignment fix (Option A).
     {
-        const uint8_t *ra = (const uint8_t *)__builtin_return_address(0);
-        bool peerManagerDispatch = false;
-        if (ra) {
-            // Read 6 bytes back from RA. callq *disp32(%reg) is 6 bytes.
-            // Use volatile to force actual memory reads (no caching).
-            // We do NOT trust ra as a kernel address blindly; if it's outside
-            // mapped memory the read would fault. But __builtin_return_address(0)
-            // returns the saved RIP that x86 already pushed, which by design is
-            // executable kernel memory — safe to read.
-            const volatile uint8_t *p = ra - 6;
-            if (p[0] == 0xff &&
-                (p[1] & 0xf8) == 0x90 &&  // ModR/M for `*disp32(%reg)` with mod=10
-                p[2] == 0xb8 && p[3] == 0x0e && p[4] == 0x00 && p[5] == 0x00) {
-                peerManagerDispatch = true;
-            }
-        }
-
-        // Counters: track which path each invocation took
+        void *ra = __builtin_return_address(0);
         IOService *res = IOService::getResourceService();
         if (res) {
-            const char *key = peerManagerDispatch
-                ? "INSTR_supchan_peermgr"
-                : "INSTR_supchan_apple";
-            OSNumber *prev = OSDynamicCast(OSNumber, res->getProperty(key));
+            // Total call counter
+            OSNumber *prev = OSDynamicCast(OSNumber, res->getProperty("INSTR_supchan_calls"));
             uint32_t v = prev ? prev->unsigned32BitValue() + 1 : 1;
             OSNumber *n = OSNumber::withNumber(v, 32);
-            if (n) { res->setProperty(key, n); n->release(); }
-            // Also save last RA for forensic
-            OSNumber *raN = OSNumber::withNumber((uint64_t)ra, 64);
-            if (raN) { res->setProperty("INSTR_supchan_lastRA", raN); raN->release(); }
-        }
+            if (n) { res->setProperty("INSTR_supchan_calls", n); n->release(); }
 
-        if (peerManagerDispatch) {
-            // PeerManager path — buffer is small/garbage. Write only 8 bytes.
-            ad->version = APPLE80211_VERSION;
-            ad->num_channels = 0;
-            return kIOReturnSuccess;
+            // Save last RA + 8 bytes preceding it (instruction context)
+            uint64_t raVal = (uint64_t)ra;
+            OSNumber *raN = OSNumber::withNumber(raVal, 64);
+            if (raN) { res->setProperty("INSTR_supchan_lastRA", raN); raN->release(); }
+
+            // Read 8 bytes at ra-8 (covers most callq+disp32 forms = 6 bytes
+            // plus 2 extra context bytes). __builtin_return_address(0) is the
+            // saved RIP — already in executable kernel memory, safe to read.
+            uint64_t bytesPre = 0;
+            if (ra) {
+                memcpy(&bytesPre, (const uint8_t *)ra - 8, 8);
+            }
+            OSNumber *bN = OSNumber::withNumber(bytesPre, 64);
+            if (bN) { res->setProperty("INSTR_supchan_lastBytesPre", bN); bN->release(); }
+
+            // Distinct-RA logging: capture first 8 distinct RAs we've ever seen.
+            // Stored as separate keyed properties so we can read them all post-
+            // boot via `ioreg -l | grep INSTR_supchan_RA[0-7]`.
+            for (int i = 0; i < 8; i++) {
+                char key[32];
+                snprintf(key, sizeof(key), "INSTR_supchan_RA%d", i);
+                OSNumber *existing = OSDynamicCast(OSNumber, res->getProperty(key));
+                if (!existing) {
+                    // Empty slot — fill it
+                    OSNumber *newN = OSNumber::withNumber(raVal, 64);
+                    if (newN) { res->setProperty(key, newN); newN->release(); }
+
+                    char keyB[32];
+                    snprintf(keyB, sizeof(keyB), "INSTR_supchan_RA%dBytes", i);
+                    OSNumber *newB = OSNumber::withNumber(bytesPre, 64);
+                    if (newB) { res->setProperty(keyB, newB); newB->release(); }
+                    break;
+                }
+                if (existing->unsigned64BitValue() == raVal) {
+                    // Already logged — increment that slot's hit counter
+                    char keyC[32];
+                    snprintf(keyC, sizeof(keyC), "INSTR_supchan_RA%dCount", i);
+                    OSNumber *cprev = OSDynamicCast(OSNumber, res->getProperty(keyC));
+                    uint32_t cv = cprev ? cprev->unsigned32BitValue() + 1 : 1;
+                    OSNumber *cn = OSNumber::withNumber(cv, 32);
+                    if (cn) { res->setProperty(keyC, cn); cn->release(); }
+                    break;
+                }
+                // Else slot taken by different RA — try next slot
+            }
         }
     }
+
+    // SAFE-MINIMUM WRITE: 8 bytes only. airportd will see "0 channels" — same
+    // as v3 baseline. Trade-off: no Wi-Fi enable, but no panic risk regardless
+    // of caller buffer size.
+    ad->version = APPLE80211_VERSION;
+    ad->num_channels = 0;
+    return kIOReturnSuccess;
 #else
     {
         IOService *res = IOService::getResourceService();
@@ -1092,11 +1102,8 @@ getSUPPORTED_CHANNELS(struct apple80211_sup_channel_data *ad)
             if (n) { res->setProperty("INSTR_supchan_calls", n); n->release(); }
         }
     }
-#endif
 
-    // apple80211getSUPPORTED_CHANNELS path (Sequoia) or always (Sonoma) —
-    // buffer is full 4824B (Sequoia) or smaller (Sonoma) but caller-allocated
-    // properly. Write real channel list.
+    // Sonoma 14 path — full channel list (caller buffer is properly sized).
     ad->version = APPLE80211_VERSION;
     ad->num_channels = 0;
     struct ieee80211com *ic = fHalService->get80211Controller();
@@ -1111,6 +1118,7 @@ getSUPPORTED_CHANNELS(struct apple80211_sup_channel_data *ad)
         }
     }
     return kIOReturnSuccess;
+#endif
 }
 
 IOReturn AirportItlwmSkywalkInterface::
