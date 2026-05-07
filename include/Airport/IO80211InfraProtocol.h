@@ -154,14 +154,7 @@ public:
     virtual IOReturn getAUTH_TYPE(apple80211_authtype_data *) = 0;
     virtual IOReturn getCHANNEL(apple80211_channel_data *) = 0;
     virtual IOReturn getPOWERSAVE(apple80211_powersave_data *) = 0;
-#if __IO80211_TARGET >= __MAC_15_0
-    // Apple's IO80211Family in 15.x has getSUPPORTED_CHANNELS at vtable
-    // byte offset 0xeb8 (apple80211getSUPPORTED_CHANNELS dispatcher hard-codes
-    // the offset). Swap the declaration order so our concrete vtable matches.
-    virtual IOReturn getSUPPORTED_CHANNELS(apple80211_sup_channel_data *) = 0;
-#else
     virtual IOReturn getTXPOWER(apple80211_txpower_data *) = 0;
-#endif
     virtual IOReturn getRATE(apple80211_rate_data *) = 0;
     virtual IOReturn getBSSID(apple80211_bssid_data *) = 0;
     virtual IOReturn getSCAN_RESULT(apple80211_scan_result *) = 0;
@@ -170,11 +163,7 @@ public:
     virtual IOReturn getOP_MODE(apple80211_opmode_data *) = 0;
     virtual IOReturn getRSSI(apple80211_rssi_data *) = 0;
     virtual IOReturn getNOISE(apple80211_noise_data *) = 0;
-#if __IO80211_TARGET >= __MAC_15_0
-    virtual IOReturn getTXPOWER(apple80211_txpower_data *) = 0;
-#else
     virtual IOReturn getSUPPORTED_CHANNELS(apple80211_sup_channel_data *) = 0;
-#endif
     virtual IOReturn getLOCALE(apple80211_locale_data *) = 0;
     virtual IOReturn getDEAUTH(apple80211_deauth_data *) = 0;
     virtual IOReturn getRATE_SET(apple80211_rate_set_data *) = 0;
