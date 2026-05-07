@@ -312,15 +312,16 @@ public:
 private:
     AirportItlwm *instance;
     ItlHalService *fHalService;
-    
+
     //IO80211
     struct ieee80211_node *fNextNodeToSend;
     IOTimerEventSource *scanSource;
     bool fScanResultWrapping;
-    
+
     u_int32_t current_authtype_lower;
     u_int32_t current_authtype_upper;
     bool disassocIsVoluntary;
+
 };
 
 
