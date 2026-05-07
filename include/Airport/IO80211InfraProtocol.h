@@ -154,7 +154,19 @@ public:
     virtual IOReturn getAUTH_TYPE(apple80211_authtype_data *) = 0;
     virtual IOReturn getCHANNEL(apple80211_channel_data *) = 0;
     virtual IOReturn getPOWERSAVE(apple80211_powersave_data *) = 0;
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia 15: vtable[0xeb8] (= 5th PV slot) MUST be getSUPPORTED_CHANNELS.
+    // Apple's apple80211getSUPPORTED_CHANNELS helper @ 0xe7050 hardcodes
+    // tail-jmp to vtable[0xeb8] after IO80211InfraProtocol metaCast.
+    // Source: research/sequoia-port/ghidra-projects/apple80211-helper-vtable-map.md
+    // Previous v9 build had getTXPOWER at this slot with a num_channels=0 hack
+    // (research/sequoia-port/ghidra-projects/3538d5f) that kept airportd alive
+    // but starved it of channel data → Power=Off, Supported Channels=null
+    // (verified 2026-05-08 wdutil info on Sequoia 15.7.5).
+    virtual IOReturn getSUPPORTED_CHANNELS(apple80211_sup_channel_data *) = 0;  // slot 0xeb8
+#else
     virtual IOReturn getTXPOWER(apple80211_txpower_data *) = 0;
+#endif
     virtual IOReturn getRATE(apple80211_rate_data *) = 0;
     virtual IOReturn getBSSID(apple80211_bssid_data *) = 0;
     virtual IOReturn getSCAN_RESULT(apple80211_scan_result *) = 0;
@@ -163,7 +175,16 @@ public:
     virtual IOReturn getOP_MODE(apple80211_opmode_data *) = 0;
     virtual IOReturn getRSSI(apple80211_rssi_data *) = 0;
     virtual IOReturn getNOISE(apple80211_noise_data *) = 0;
+#if __IO80211_TARGET >= __MAC_15_0
+    // Sequoia 15: getTXPOWER moved to 14th PV slot (vtable[0xf00]). Apple's
+    // apple80211getTXPOWER helper @ 0xe6bbe dispatches to vtable[0xe98] (= 1st
+    // PV, our getSSID slot) for InfraProtocol path — that mismatch is harmless
+    // because txpower queries on a powered-off radio just return whatever
+    // garbage; airportd doesn't gate Wi-Fi enable on TXPOWER values.
+    virtual IOReturn getTXPOWER(apple80211_txpower_data *) = 0;                  // slot 0xf00
+#else
     virtual IOReturn getSUPPORTED_CHANNELS(apple80211_sup_channel_data *) = 0;
+#endif
     virtual IOReturn getLOCALE(apple80211_locale_data *) = 0;
     virtual IOReturn getDEAUTH(apple80211_deauth_data *) = 0;
     virtual IOReturn getRATE_SET(apple80211_rate_set_data *) = 0;
