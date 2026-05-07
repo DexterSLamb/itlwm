@@ -346,6 +346,19 @@ newUserClient(task_t owningTask, void *securityID, UInt32 type,
         return kIOReturnUnsupported;
     }
     BUMP("INSTR_nuc_allocOK");
+    // v3: verify obj 真身份 — class name at alloc + obj address
+    {
+        IOService *_r = IOService::getResourceService();
+        if (_r) {
+            const OSMetaClass *mc = obj->getMetaClass();
+            const char *cn = (mc && mc->getClassName()) ? mc->getClassName() : "(no-meta)";
+            OSString *str = OSString::withCString(cn);
+            if (str) { _r->setProperty("INSTR_nuc_allocClassName", str); str->release(); }
+            uint64_t addr = reinterpret_cast<uint64_t>(obj);
+            OSNumber *an = OSNumber::withNumber(addr, 64);
+            if (an) { _r->setProperty("INSTR_nuc_lastObjAddr", an); an->release(); }
+        }
+    }
     IOUserClient *uc = OSDynamicCast(IOUserClient, obj);
     if (!uc) {
         BUMP("INSTR_nuc_castFailed");
