@@ -643,10 +643,38 @@ getTXPOWER(struct apple80211_txpower_data *txd)
     // which in our layout is getSSID anyway, so this method's return is
     // already moot for them.
     if (!txd) return kIOReturnError;
+    // v8: instrument to confirm whether this method is on airportd's
+    // SUPPORTED_CHANNELS dispatch path. Counter bumps on every call.
+    {
+        IOService *res = IOService::getResourceService();
+        if (res) {
+            OSNumber *prev = OSDynamicCast(OSNumber, res->getProperty("INSTR_getTXPOWER_calls"));
+            uint32_t v = prev ? prev->unsigned32BitValue() + 1 : 1;
+            OSNumber *n = OSNumber::withNumber(v, 32);
+            if (n) { res->setProperty("INSTR_getTXPOWER_calls", n); n->release(); }
+            // also record the buffer address — if this address falls in stack
+            // range (~0x7000xxxxxxxx) it strongly hints airportd-userspace shape
+            uint64_t pv = reinterpret_cast<uint64_t>(txd);
+            OSNumber *pn = OSNumber::withNumber(pv, 64);
+            if (pn) { res->setProperty("INSTR_getTXPOWER_lastBuf", pn); pn->release(); }
+        }
+    }
     memset(txd, 0, sizeof(*txd));
     txd->version = APPLE80211_VERSION;
     txd->txpower = 0;  // KEEP ZERO — see comment above; do not restore ic_txpower
     txd->txpower_unit = APPLE80211_UNIT_PERCENT;
+    // Defensive extra zeroing: write 0 to bytes 12..16 (= sup_chan_data view's
+    // supported_channels[0].channel field). num_channels=0 should already
+    // prevent iteration, but if Apple's framework reads channel[0] regardless,
+    // this gives it a zeroed channel struct. Buffer is at least sizeof(sup_chan_data)
+    // (~8KB) when called via Apple's SUPPORTED_CHANNELS wrapper, so write past
+    // sizeof(txpower_data) is safe.
+    {
+        uint64_t *p = reinterpret_cast<uint64_t *>(txd);
+        // bytes 16..31 — first apple80211_channel struct (channel + flags + ...)
+        p[2] = 0;
+        p[3] = 0;
+    }
     return kIOReturnSuccess;
 }
 
