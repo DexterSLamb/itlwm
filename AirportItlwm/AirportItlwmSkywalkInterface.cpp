@@ -288,6 +288,75 @@ void AirportItlwmSkywalkInterface::setGTK(const u_int8_t *gtk, size_t key_len, u
 // per the new vtable layout (slot 414 = init(IOService*) on the parent).
 // The driver calls init() via Apple's framework path, then bindController()
 // from AirportItlwm::start() to wire up the back-pointer.
+// Phase 3.0 hypothesis test override (Sequoia 15 only).
+// Mimic Apple's IO80211SkywalkInterface::newUserClient (RE'd from KDK 15.7.4
+// at __ZN23IO80211SkywalkInterface13newUserClient... @ 0x152a8e):
+//   - if type != 0, return error
+//   - allocate IO80211APIUserClient instance via OSMetaClass
+//   - initWithTask + attach + start
+//   - return success
+//
+// The IO80211APIUserClient class is registered by Apple's IO80211Family kext
+// (loaded before us). OSMetaClass::allocClassWithName looks it up at runtime.
+//
+// Instrumentation writes IOResources properties so we can verify post-boot:
+//   INSTR_newUserClient_calls    : how many times this method was called
+//   INSTR_newUserClient_lastType : last 'type' arg seen (airportd uses 0)
+//   INSTR_newUserClient_alloc_failed : "yes" if OSMetaClass alloc returned NULL
+//
+// If INSTR_newUserClient_calls > 0 after boot, our override IS at the slot
+// IOKit calls when airportd opens user client. Confirms hypothesis that
+// vtable[0x780] needs to be non-NULL with a real implementation.
+IOReturn AirportItlwmSkywalkInterface::
+newUserClient(task_t owningTask, void *securityID, UInt32 type,
+              OSDictionary *properties, IOUserClient **handler)
+{
+    {
+        IOService *res = IOService::getResourceService();
+        if (res) {
+            OSNumber *prev = OSDynamicCast(OSNumber, res->getProperty("INSTR_newUserClient_calls"));
+            uint32_t v = prev ? prev->unsigned32BitValue() + 1 : 1;
+            OSNumber *n = OSNumber::withNumber(v, 32);
+            if (n) { res->setProperty("INSTR_newUserClient_calls", n); n->release(); }
+            OSNumber *tn = OSNumber::withNumber((uint32_t)type, 32);
+            if (tn) { res->setProperty("INSTR_newUserClient_lastType", tn); tn->release(); }
+        }
+    }
+
+    // Apple checks (type != 0 && type != 0x6d444e53 'mDNS') — return error
+    if (type != 0) return kIOReturnError;
+
+    // Allocate IO80211APIUserClient via OSMetaClass runtime lookup.
+    // (The class is in IO80211Family kext, loaded before us.)
+    const OSSymbol *sym = OSSymbol::withCStringNoCopy("IO80211APIUserClient");
+    if (!sym) return kIOReturnNoMemory;
+    OSObject *obj = OSMetaClass::allocClassWithName(sym);
+    sym->release();
+    if (!obj) {
+        IOService *res = IOService::getResourceService();
+        if (res) res->setProperty("INSTR_newUserClient_alloc_failed", "yes");
+        return kIOReturnUnsupported;
+    }
+    IOUserClient *uc = OSDynamicCast(IOUserClient, obj);
+    if (!uc) { obj->release(); return kIOReturnError; }
+
+    if (!uc->initWithTask(owningTask, securityID, type, properties)) {
+        uc->release();
+        return kIOReturnError;
+    }
+    if (!uc->attach(this)) {
+        uc->release();
+        return kIOReturnError;
+    }
+    if (!uc->start(this)) {
+        uc->detach(this);
+        uc->release();
+        return kIOReturnError;
+    }
+    *handler = uc;
+    return kIOReturnSuccess;
+}
+
 bool AirportItlwmSkywalkInterface::
 init()
 {

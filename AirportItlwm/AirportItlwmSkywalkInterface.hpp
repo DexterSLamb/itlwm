@@ -18,6 +18,27 @@ class AirportItlwmSkywalkInterface : public IO80211InfraProtocol {
 
 public:
 #if __IO80211_TARGET >= __MAC_15_0
+    // Phase 3.0 hypothesis test: explicit IOService::newUserClient override.
+    // Sequoia 15 IO80211SkywalkInterface vtable byte 0x780 = newUserClient.
+    // Our compiled __ZTV28AirportItlwmSkywalkInterface byte 0x780 = NULL
+    // (nobody in MacKernelSDK chain overrides; kxld may or may not patch
+    // from Apple runtime). airportd IOServiceOpen calls vtable[0x780] →
+    // we either get NULL or IOService::newUserClient (returns Unsupported)
+    // → 0 IO80211APIUserClient created → airportd queries fall back
+    // → garbage data → SIGBUS.
+    //
+    // By adding override here, the C++ compiler emits OUR function pointer
+    // at IOService::newUserClient's vtable slot in our compiled vtable.
+    // If MacKernelSDK IOService.h positions newUserClient at byte 0x780
+    // (matching Apple Sequoia 15 binary), our override lands there and
+    // gets called by airportd's IOServiceOpen.
+    //
+    // Implementation mimics Apple's IO80211SkywalkInterface::newUserClient
+    // (RE'd from KDK 15.7.4 Ghidra @ 0x152a8e): for type=0, allocate
+    // IO80211APIUserClient via OSMetaClass + init+attach+start.
+    virtual IOReturn newUserClient(task_t owningTask, void *securityID,
+                                   UInt32 type, OSDictionary *properties,
+                                   IOUserClient **handler) APPLE_KEXT_OVERRIDE;
     // Sequoia 15.7.5 vtable slot 414 = init(IOService*). Apple's
     // IO80211SkywalkInterface::init(IOService*) is what super::start
     // expects to be invoked first. Don't shadow with a custom (this,
