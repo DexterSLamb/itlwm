@@ -448,12 +448,64 @@ void AirportItlwmShimPlugin::patchAirportItlwmVtable(KernelPatcher &kp)
     setLifeBit(8);  // pAiv-aiIdx-resolved
     kprintf("[aishim] AirportItlwm loadIndex=%zu\n", idx);
 
+    // v5: install supchan hook FIRST, before controller vtable patch.
+    // The vtable patch was the only thing failing in v4 (vtAddr-resolve-failed),
+    // and it's INDEPENDENT of the supchan hook target. Run hook installation
+    // first so it has a chance to succeed even if the vtable patch later fails.
+    {
+        auto io80211Idx = kp.loadKinfo(&gIO80211Kext);
+        kp.clearError();
+        supchanPublishU64("AirportItlwm-supchan-io80211-idx", io80211Idx);
+        if (io80211Idx == 0) {
+            supchanPublishStr("AirportItlwm-supchan-status", "io80211-loadKinfo-failed");
+        } else {
+            setLifeBit(11); // pAiv-io80211Idx-resolved
+            auto wrapperSym = kp.solveSymbol(io80211Idx,
+                "__Z31apple80211getSUPPORTED_CHANNELSP23IO80211SkywalkInterfaceP27apple80211_sup_channel_data");
+            kp.clearError();
+            supchanPublishU64("AirportItlwm-supchan-wrapper-sym", wrapperSym);
+            if (!wrapperSym) {
+                supchanPublishStr("AirportItlwm-supchan-status", "wrapper-symbol-not-resolved");
+                // Fallback test: try a known-exported IO80211 symbol to see if
+                // solveSymbol works at all on this kinfo.
+                auto probe = kp.solveSymbol(io80211Idx, "__ZN17IO80211Controller11postMessageEjPvmjS0_");
+                kp.clearError();
+                supchanPublishU64("AirportItlwm-supchan-probe-postMessage", probe);
+            } else {
+                setLifeBit(12); // pAiv-supSym-resolved
+                gOrig_supchan = kp.routeFunction(wrapperSym,
+                    reinterpret_cast<mach_vm_address_t>(my_supchan),
+                    /*buildWrapper*/ true, /*kernelRoute*/ true);
+                kp.clearError();
+                supchanPublishU64("AirportItlwm-supchan-orig", gOrig_supchan);
+                if (gOrig_supchan) {
+                    setLifeBit(13); // pAiv-supRoute-installed
+                    supchanPublishStr("AirportItlwm-supchan-status", "installed");
+                } else {
+                    supchanPublishStr("AirportItlwm-supchan-status", "routeFunction-failed");
+                }
+            }
+        }
+    }
+
     auto vtableAddr = kp.solveSymbol(idx, "__ZTV12AirportItlwm");
     kp.clearError();
     supchanPublishU64("AirportItlwm-supchan-pPv-vtAddr", vtableAddr);
     if (!vtableAddr) {
         supchanPublishStr("AirportItlwm-supchan-pPv-status", "vtAddr-resolve-failed");
+        // Probe alt AirportItlwm symbols to confirm whether solveSymbol works
+        // at all for OUR kinfo on Sequoia 15. If these also return 0, we know
+        // the kext's symbol table is post-load stripped and need a different
+        // mechanism (e.g. read vtable ptr from a registered IOService instance).
+        auto probe1 = kp.solveSymbol(idx, "__ZN12AirportItlwm5startEP9IOService");
+        kp.clearError();
+        supchanPublishU64("AirportItlwm-supchan-probe-aiStart", probe1);
+        auto probe2 = kp.solveSymbol(idx, "__ZN12AirportItlwm15setCOUNTRY_CODEEP23IO80211SkywalkInterfaceP28apple80211_country_code_data");
+        kp.clearError();
+        supchanPublishU64("AirportItlwm-supchan-probe-aiSetCC", probe2);
         SYSLOG("aishim", "_ZTV12AirportItlwm not resolvable");
+        // Don't return — keep going so pAiv-completed marker fires too.
+        setLifeBit(14); // pAiv-completed
         return;
     }
     setLifeBit(9);  // pAiv-vtAddr-resolved
@@ -499,40 +551,6 @@ void AirportItlwmShimPlugin::patchAirportItlwmVtable(KernelPatcher &kp)
         }
     }
     setLifeBit(10); // pAiv-controllerSlots-attempted
-
-    // Stage 1 v2: install diagnostic hook on apple80211getSUPPORTED_CHANNELS.
-    // Use loadKinfo path (NOT path-based onKextLoad) because IO80211FamilyV2
-    // on Sequoia 15 lives in BootKC and Lilu's path scanner doesn't see it.
-    // All status reported via IOResources properties (kprintf doesn't reach
-    // unified log on Sequoia 15 in our config).
-    auto io80211Idx = kp.loadKinfo(&gIO80211Kext);
-    kp.clearError();
-    supchanPublishU64("AirportItlwm-supchan-io80211-idx", io80211Idx);
-    if (io80211Idx == 0) {
-        supchanPublishStr("AirportItlwm-supchan-status", "io80211-loadKinfo-failed");
-        return;
-    }
-    setLifeBit(11); // pAiv-io80211Idx-resolved
-    auto wrapperSym = kp.solveSymbol(io80211Idx,
-        "__Z31apple80211getSUPPORTED_CHANNELSP23IO80211SkywalkInterfaceP27apple80211_sup_channel_data");
-    kp.clearError();
-    supchanPublishU64("AirportItlwm-supchan-wrapper-sym", wrapperSym);
-    if (!wrapperSym) {
-        supchanPublishStr("AirportItlwm-supchan-status", "wrapper-symbol-not-resolved");
-        return;
-    }
-    setLifeBit(12); // pAiv-supSym-resolved
-    gOrig_supchan = kp.routeFunction(wrapperSym,
-        reinterpret_cast<mach_vm_address_t>(my_supchan),
-        /*buildWrapper*/ true, /*kernelRoute*/ true);
-    kp.clearError();
-    supchanPublishU64("AirportItlwm-supchan-orig", gOrig_supchan);
-    if (gOrig_supchan) {
-        setLifeBit(13); // pAiv-supRoute-installed
-        supchanPublishStr("AirportItlwm-supchan-status", "installed");
-    } else {
-        supchanPublishStr("AirportItlwm-supchan-status", "routeFunction-failed");
-    }
     setLifeBit(14); // pAiv-completed
     supchanPublishStr("AirportItlwm-supchan-pPv-completed", "yes");
 }
