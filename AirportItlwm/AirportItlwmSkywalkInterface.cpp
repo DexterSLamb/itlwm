@@ -9,6 +9,7 @@
 #include "AirportItlwmSkywalkInterface.hpp"
 #include <sys/CTimeout.hpp>
 #include <libkern/c++/OSMetaClass.h>
+#include <IOKit/IOUserClient.h>
 #include <crypto/sha1.h>
 #include <net80211/ieee80211_node.h>
 #include <net80211/ieee80211_ioctl.h>
