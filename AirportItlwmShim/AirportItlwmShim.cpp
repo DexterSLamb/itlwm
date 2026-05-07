@@ -446,6 +446,14 @@ void AirportItlwmShimPlugin::patchAirportItlwmVtable(KernelPatcher &kp)
         return;
     }
     setLifeBit(8);  // pAiv-aiIdx-resolved
+
+    // CRITICAL: solveSymbol returns 0 unless the kinfo's symbol table has been
+    // parsed via updateRunningInfo. Lilu's processKextLoadCallbacks does this
+    // automatically before firing path-based onKextLoad callbacks, but our
+    // loadKinfo path bypasses that. Force re-parse here.
+    auto aiSize = kp.updateRunningInfo(idx, 0, 0, /*force*/ true);
+    kp.clearError();
+    supchanPublishU64("AirportItlwm-supchan-ai-runningSize", aiSize);
     kprintf("[aishim] AirportItlwm loadIndex=%zu\n", idx);
 
     // v5: install supchan hook FIRST, before controller vtable patch.
@@ -460,6 +468,10 @@ void AirportItlwmShimPlugin::patchAirportItlwmVtable(KernelPatcher &kp)
             supchanPublishStr("AirportItlwm-supchan-status", "io80211-loadKinfo-failed");
         } else {
             setLifeBit(11); // pAiv-io80211Idx-resolved
+            // Same as above: force symbol-table parse before solveSymbol.
+            auto io8Size = kp.updateRunningInfo(io80211Idx, 0, 0, /*force*/ true);
+            kp.clearError();
+            supchanPublishU64("AirportItlwm-supchan-io80211-runningSize", io8Size);
             auto wrapperSym = kp.solveSymbol(io80211Idx,
                 "__Z31apple80211getSUPPORTED_CHANNELSP23IO80211SkywalkInterfaceP27apple80211_sup_channel_data");
             kp.clearError();
