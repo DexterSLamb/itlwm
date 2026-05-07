@@ -327,35 +327,58 @@ newUserClient(task_t owningTask, void *securityID, UInt32 type,
     // Apple checks (type != 0 && type != 0x6d444e53 'mDNS') — return error
     if (type != 0) return kIOReturnError;
 
-    // Allocate IO80211APIUserClient via OSMetaClass runtime lookup.
-    // (The class is in IO80211Family kext, loaded before us.)
+#define BUMP(key) do { \
+    IOService *_r = IOService::getResourceService(); \
+    if (_r) { \
+        OSNumber *_p = OSDynamicCast(OSNumber, _r->getProperty(key)); \
+        uint32_t _v = _p ? _p->unsigned32BitValue() + 1 : 1; \
+        OSNumber *_n = OSNumber::withNumber(_v, 32); \
+        if (_n) { _r->setProperty(key, _n); _n->release(); } \
+    } \
+} while (0)
+
     const OSSymbol *sym = OSSymbol::withCStringNoCopy("IO80211APIUserClient");
     if (!sym) return kIOReturnNoMemory;
     OSObject *obj = OSMetaClass::allocClassWithName(sym);
     sym->release();
     if (!obj) {
-        IOService *res = IOService::getResourceService();
-        if (res) res->setProperty("INSTR_newUserClient_alloc_failed", "yes");
+        BUMP("INSTR_nuc_allocFailed");
         return kIOReturnUnsupported;
     }
+    BUMP("INSTR_nuc_allocOK");
     IOUserClient *uc = OSDynamicCast(IOUserClient, obj);
-    if (!uc) { obj->release(); return kIOReturnError; }
+    if (!uc) {
+        BUMP("INSTR_nuc_castFailed");
+        obj->release();
+        return kIOReturnError;
+    }
+    BUMP("INSTR_nuc_castOK");
 
     if (!uc->initWithTask(owningTask, securityID, type, properties)) {
+        BUMP("INSTR_nuc_initFailed");
         uc->release();
         return kIOReturnError;
     }
+    BUMP("INSTR_nuc_initOK");
+
     if (!uc->attach(this)) {
+        BUMP("INSTR_nuc_attachFailed");
         uc->release();
         return kIOReturnError;
     }
+    BUMP("INSTR_nuc_attachOK");
+
     if (!uc->start(this)) {
+        BUMP("INSTR_nuc_startFailed");
         uc->detach(this);
         uc->release();
         return kIOReturnError;
     }
+    BUMP("INSTR_nuc_startOK");
+
     *handler = uc;
     return kIOReturnSuccess;
+#undef BUMP
 }
 
 bool AirportItlwmSkywalkInterface::
