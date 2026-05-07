@@ -111,6 +111,14 @@ static bool gTraceEnabled = false;
 
 static mach_vm_address_t gOrig_executeCommandAction  = 0;
 
+// Stage 1 diagnostic: hook apple80211getSUPPORTED_CHANNELS wrapper to discover
+// (a) whether the wrapper is on the actual airportd dispatch path, (b) what
+// class the iface belongs to (our SkywalkInterface vs Apple-managed wrap),
+// (c) what's at vtable byte offsets 0xcc0 (Apple guard), 0xeb8 (Apple's expected
+// SUPPORTED_CHANNELS slot), 0xf00 (our actual SUPPORTED_CHANNELS slot) on the
+// runtime iface. No functional change — just log and forward to the original.
+static mach_vm_address_t gOrig_supchan = 0;
+
 // Cap kprintf output to avoid hanging boot. We only need a handful of trace
 // events to find the corruption point — the panic happens deterministically.
 static volatile uint32_t gTraceCount = 0;
@@ -139,6 +147,39 @@ static int my_executeCommandAction(void *owner, void *packet, void *a1, void *a2
         }
     }
     return reinterpret_cast<executeCommandAction_t>(gOrig_executeCommandAction)(owner, packet, a1, a2, a3);
+}
+
+// Stage 1 diagnostic hook for apple80211getSUPPORTED_CHANNELS. Logs once per
+// firing (capped at 32 to avoid log spam from periodic queries), then tail-calls
+// the original Apple wrapper. Tail-call preserves whatever the wrapper would
+// have done — including the broken vtable[0xeb8] dispatch that is the root
+// cause we eventually need to fix in Stage 2. Stage 1 is purely observational.
+typedef IOReturn (*supchan_t)(void *iface, void *data);
+static volatile uint32_t gSupchanLogCount = 0;
+static const uint32_t kSupchanLogMax = 32;
+static IOReturn my_supchan(void *iface, void *data)
+{
+    uint32_t n = __c11_atomic_fetch_add(reinterpret_cast<volatile _Atomic uint32_t *>(&gSupchanLogCount), 1, __ATOMIC_RELAXED);
+    if (n < kSupchanLogMax) {
+        const char *cls = "(null-iface)";
+        void *v_cc0 = nullptr, *v_eb8 = nullptr, *v_f00 = nullptr;
+        if (iface) {
+            OSObject *obj = static_cast<OSObject *>(iface);
+            const OSMetaClass *mc = obj->getMetaClass();
+            cls = (mc && mc->getClassName()) ? mc->getClassName() : "(no-meta)";
+            void **vt = *reinterpret_cast<void ***>(iface);
+            if (vt) {
+                v_cc0 = *reinterpret_cast<void **>(reinterpret_cast<char *>(vt) + 0xcc0);
+                v_eb8 = *reinterpret_cast<void **>(reinterpret_cast<char *>(vt) + 0xeb8);
+                v_f00 = *reinterpret_cast<void **>(reinterpret_cast<char *>(vt) + 0xf00);
+            }
+        }
+        kprintf("[aishim/supchan] #%u iface=%p class=%s data=%p vt[0xcc0]=%p vt[0xeb8]=%p vt[0xf00]=%p\n",
+                n, iface, cls, data, v_cc0, v_eb8, v_f00);
+    }
+    if (gOrig_supchan)
+        return reinterpret_cast<supchan_t>(gOrig_supchan)(iface, data);
+    return kIOReturnUnsupported;
 }
 
 // ============================================================================
@@ -292,6 +333,28 @@ void AirportItlwmShimPlugin::onKextLoad(KernelPatcher &kp, size_t idx,
             else
                 SYSLOG("aishim", "postMessage unresolved (non-fatal)");
             kp.clearError();
+        }
+        // Stage 1: install diagnostic hook on apple80211getSUPPORTED_CHANNELS.
+        // The wrapper is the InfraProtocol-cast handler that ends with the
+        // broken vtable[0xeb8] tail-call. By hooking it we can observe what
+        // iface airportd actually queries and decide Stage 2 strategy.
+        if (!gOrig_supchan) {
+            auto sym = kp.solveSymbol(idx,
+                "__Z31apple80211getSUPPORTED_CHANNELSP23IO80211SkywalkInterfaceP27apple80211_sup_channel_data");
+            kp.clearError();
+            if (sym) {
+                gOrig_supchan = kp.routeFunction(sym,
+                    reinterpret_cast<mach_vm_address_t>(my_supchan),
+                    /*buildWrapper*/ true, /*kernelRoute*/ true);
+                kp.clearError();
+                if (gOrig_supchan)
+                    kprintf("[aishim/supchan] hook installed @ 0x%llx orig=0x%llx\n",
+                            sym, gOrig_supchan);
+                else
+                    SYSLOG("aishim", "supchan routeFunction failed");
+            } else {
+                SYSLOG("aishim", "supchan symbol not resolved");
+            }
         }
     } else if (gTraceEnabled && idx == gIONetKext.loadIndex) {
         // ONLY hook executeCommandAction. v1 also hooked performCommand and
