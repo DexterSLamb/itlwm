@@ -394,10 +394,15 @@ void AirportItlwmShimPlugin::onKextLoad(KernelPatcher &kp, size_t idx,
 
 void AirportItlwmShimPlugin::patchAirportItlwmVtable(KernelPatcher &kp)
 {
+    // Stage 1 v3 marker: prove this callback fired.
+    supchanPublishStr("AirportItlwm-supchan-pPv-entered", "yes");
+
     // Find AirportItlwm kext (loaded by OC at boot, so already in patcher's kinfos).
     auto idx = kp.loadKinfo(&gAirportItlwmKext);
     kp.clearError();
+    supchanPublishU64("AirportItlwm-supchan-pPv-aiIdx", idx);
     if (idx == 0) {
+        supchanPublishStr("AirportItlwm-supchan-pPv-status", "ai-loadKinfo-failed");
         SYSLOG("aishim", "AirportItlwm kext not found in patcher kinfos");
         return;
     }
