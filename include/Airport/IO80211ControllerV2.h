@@ -332,7 +332,10 @@ public:
     // 397 as Apple expects. Returns void* nullptr — Apple's slot 396 is PV
     // (Apple never calls it), but should anything dispatch on it the nullptr
     // return is safe for both pointer and integer interpretations.
-    virtual void *_seq_eth_ext_slot396_placeholder() { return nullptr; }                              // slot 396 [PV padding]
+    // Phase 3.8: byte 0xc60 = AppleBCMWLANCore::isCommandProhibited (verified
+    // against BootKC 15.7.5). Previously a placeholder — rename to bind
+    // subclass override at this slot.
+    virtual bool isCommandProhibited(int) = 0;                                      // byte 0xc60 = slot 396
 
     // --- IO80211Controller's own new vmethods, slot order matches 15.7.5 ---
 
@@ -351,12 +354,17 @@ public:
     // driver hook). Provide a no-op concrete impl so AirportItlwm's vtable
     // has SOMETHING at this slot; the slot index is what matters for OC's
     // vtable patcher to bind correctly to the parent vtable layout.
-    virtual void *_seq_pad_slot405() { return nullptr; }                                              // slot 405 [PV padding]
+    // Phase 3.8: byte 0xca8 = AppleBCMWLANCore::handleCardSpecific (verified
+    // against BootKC 15.7.5).
+    virtual SInt32 handleCardSpecific(IO80211SkywalkInterface *, unsigned long, void *, bool) = 0;  // byte 0xca8 = slot 405
     virtual UInt32 hardwareOutputQueueDepth();                                      // slot 406
     virtual SInt32 performCountryCodeOperation(IO80211CountryCodeOp);               // slot 407
     virtual void dataLinkLayerAttachComplete();                                     // slot 408
     virtual SInt32 enableFeature(IO80211FeatureCode, void*);                        // slot 409 [concrete in 15.7.5]
-    virtual bool isCommandProhibited(int) = 0;                                      // slot 410 [PV]
+    // Phase 3.8: isCommandProhibited moved to slot 396 (byte 0xc60) per
+    // AppleBCMWLAN ground truth. Slot 410 was a duplicate; removed so that
+    // subsequent IOCTL PV slots (getDRIVER_VERSION..) shift to match Apple's
+    // byte offsets (setPOWER lands at byte 0xcf0 instead of 0xcf8).
     // slots 411-417: 7 PVs. Best mapping based on 14.4 layout (slots 415-422
     // were 8 IOCTL hooks: getDRIVER_VERSION..setGET_DEBUG_INFO). In 15.7.5 the
     // setGET_DEBUG_INFO entry was removed and getPLATFORM_CONFIG (concrete)
