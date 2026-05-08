@@ -210,21 +210,8 @@ class IO80211InfraProtocol : public IO80211InfraInterface {
 public:
 #if __IO80211_TARGET >= __MAC_15_0
     // Phase 3.7+ FINAL Sequoia 15 InfraProtocol PV alignment.
-    //
-    // Source: AppleBCMWLANSkywalkInterface __ZTV in BootKernelExtensions.kc
-    // 15.7.5 (extracted via chained-fixup decode). This is the GROUND TRUTH —
-    // Apple's actual concrete InfraProtocol-derived class compiled binary,
-    // byte-by-byte authoritative for all 190 PV slots.
-    //
-    // Prior Phase 3.6/3.7 attempts derived slots from apple80211 helper
-    // disp32 immediates (movl $0xNNN, %r15d). Those values are vptr-relative
-    // offsets, NOT __ZTV byte offsets — C++ Itanium ABI puts vptr at
-    // __ZTV+0x10 (after RTTI header). True __ZTV byte = disp32 + 0x10.
-    // That 16-byte (= 2-slot) error caused all earlier panics.
-    //
-    // Section A (190 PVs): BCM-aligned, bytes 0xe98..0x1480.
-    // Section B (99 PVs): legacy methods absent in BCM, beyond byte 0x1488.
-    //                     Subclass override declarations preserved.
+    // Source: AppleBCMWLANSkywalkInterface __ZTV (BootKC 15.7.5 ground truth).
+    // 190 BCM-aligned PVs at bytes 0xe98..0x1480 + 99 legacy extras after.
 
 // Section A: 190 BCM-aligned PVs at bytes 0x0e98..0x1480
 // Section B: 99 legacy extras (not in BCM)
@@ -269,7 +256,7 @@ public:
     virtual IOReturn getTRAP_CRASHTRACER_MINI_DUMP(apple80211_trap_mini_dump_data *) { return kIOReturnUnsupported; }  // byte 0x0fb8
     virtual IOReturn getBEACON_INFO(apple80211_beacon_info_t *) { return kIOReturnUnsupported; }  // byte 0x0fc0
     virtual IOReturn getCHIP_POWER_RANGE(apple80211_chip_power_limit *) { return kIOReturnUnsupported; }  // byte 0x0fc8
-    virtual IOReturn getNSS(void *) { return kIOReturnUnsupported; }  // byte 0x0fd0
+    virtual IOReturn getNSS(apple80211_nss_data *) { return kIOReturnUnsupported; }  // byte 0x0fd0
     virtual IOReturn getHW_ADDR(apple80211_hw_mac_address *) { return kIOReturnUnsupported; }  // byte 0x0fd8
     virtual IOReturn getCHIP_DIAGS(appl80211_chip_diags_data *) { return kIOReturnUnsupported; }  // byte 0x0fe0
     virtual IOReturn getHP2P_CTRL(apple80211_hp2p_ctrl *) { return kIOReturnUnsupported; }  // byte 0x0fe8
@@ -287,15 +274,15 @@ public:
     virtual IOReturn getWCL_LOW_LATENCY_INFO(apple80211_low_latency_info *) { return kIOReturnUnsupported; }  // byte 0x1048
     virtual IOReturn getWCL_BSS_INFO(apple80211_beacon_msg *) { return kIOReturnUnsupported; }  // byte 0x1050
     virtual IOReturn getWCL_TRAFFIC_COUNTERS(apple80211_wcl_traffic_counters *) { return kIOReturnUnsupported; }  // byte 0x1058
-    virtual IOReturn getWCL_GET_TX_BLANKING_STATUS(void *) { return kIOReturnUnsupported; }  // byte 0x1060
+    virtual IOReturn getWCL_GET_TX_BLANKING_STATUS(uint *) { return kIOReturnUnsupported; }  // byte 0x1060
     virtual IOReturn getHE_COUNTERS(apple80211_he_counters_ctl *) { return kIOReturnUnsupported; }  // byte 0x1068
     virtual IOReturn getWCL_CHANNELS_INFO(apple80211ChannelInfo *) { return kIOReturnUnsupported; }  // byte 0x1070
     virtual IOReturn getRSN_XE(apple80211_rsn_xe_data *) { return kIOReturnUnsupported; }  // byte 0x1078
-    virtual IOReturn getSIB_COEX_STATUS(void *) { return kIOReturnUnsupported; }  // byte 0x1080
+    virtual IOReturn getSIB_COEX_STATUS(apple80211_sib_coex_status *) { return kIOReturnUnsupported; }  // byte 0x1080
     virtual IOReturn getWIFI_BT_5G_POLICY(apple80211_wifi_bt_5g_policy_t *) { return kIOReturnUnsupported; }  // byte 0x1088
     virtual IOReturn getWCL_EXTENDED_BSS_INFO(apple80211_extended_bss_info *) { return kIOReturnUnsupported; }  // byte 0x1090
     virtual IOReturn getWCL_LOW_LATENCY_INFO_STATS(apple80211_wcl_low_latency_stats *) { return kIOReturnUnsupported; }  // byte 0x1098
-    virtual IOReturn getWCL_BGSCAN_CACHE_RESULT(void *) { return kIOReturnUnsupported; }  // byte 0x10a0
+    virtual IOReturn getWCL_BGSCAN_CACHE_RESULT(apple80211_bgscan_cached_network_data_list *) { return kIOReturnUnsupported; }  // byte 0x10a0
     virtual IOReturn getWCL_WNM_OFFLOAD(apple80211_wcl_wnm_offload_t *) { return kIOReturnUnsupported; }  // byte 0x10a8
     virtual IOReturn getWIFI_NOISE_PER_ANT(apple80211_noise_per_ant_t *) { return kIOReturnUnsupported; }  // byte 0x10b0
     virtual IOReturn getFW_CLOCK_INFO(apple80211_fw_clock_info *) { return kIOReturnUnsupported; }  // byte 0x10b8
@@ -335,7 +322,7 @@ public:
     virtual IOReturn setOFFLOAD_TCPKA_ENABLE(apple80211_offload_tcpka_enable_t *) { return kIOReturnUnsupported; }  // byte 0x11c8
     virtual IOReturn setLQM_CONFIG(apple80211_lqm_config_t *) { return kIOReturnUnsupported; }  // byte 0x11d0
     virtual IOReturn setDYNAMIC_RSSI_WINDOW_CONFIG(apple80211_dynamic_rssi_window_config *) { return kIOReturnUnsupported; }  // byte 0x11d8
-    virtual IOReturn setUSB_HOST_NOTIFICATION(void *) { return kIOReturnUnsupported; }  // byte 0x11e0
+    virtual IOReturn setUSB_HOST_NOTIFICATION(apple80211_usb_host_notification_data *) { return kIOReturnUnsupported; }  // byte 0x11e0
     virtual IOReturn setHP2P_CTRL(apple80211_hp2p_ctrl *) { return kIOReturnUnsupported; }  // byte 0x11e8
     virtual IOReturn setBSS_BLACKLIST(bss_blacklist *) { return kIOReturnUnsupported; }  // byte 0x11f0
     virtual IOReturn setSET_PROPERTY(apple80211_set_property_unserialized_data *) { return kIOReturnUnsupported; }  // byte 0x11f8
