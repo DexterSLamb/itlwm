@@ -114,7 +114,11 @@ public:
     virtual IOReturn getCHANNELS_INFO(apple80211_channels_info *) override { return kIOReturnUnsupported; }
     virtual IOReturn getVHT_CAPABILITY(apple80211_vht_capability *) override { return kIOReturnUnsupported; }
     virtual IOReturn getBGSCAN_CACHE_RESULTS(apple80211_bgscan_cached_network_data_list *) override { return kIOReturnUnsupported; }
+#if __IO80211_TARGET >= __MAC_15_0
+    virtual IOReturn getROAM_PROFILE(apple80211_roam_profile_all_bands *) override { return kIOReturnUnsupported; }
+#else
     virtual IOReturn getROAM_PROFILE(apple80211_roam_profile_band_data *) override { return kIOReturnUnsupported; }
+#endif
     virtual IOReturn getCHIP_COUNTER_STATS(apple80211_chip_stats *) override { return kIOReturnUnsupported; }
     virtual IOReturn getDBG_GUARD_TIME_PARAMS(apple80211_dbg_guard_time_params *) override { return kIOReturnUnsupported; }
     virtual IOReturn getLEAKY_AP_STATS_MODE(apple80211_leaky_ap_setting *) override { return kIOReturnUnsupported; }
@@ -223,7 +227,11 @@ public:
     virtual IOReturn setGAS_START(apple80211_gas_query_t *) override { return kIOReturnUnsupported; }
     virtual IOReturn setGAS_SET_PEER(apple80211_gas_peer_t *) override { return kIOReturnUnsupported; }
     virtual IOReturn setVHT_CAPABILITY(apple80211_vht_capability *) override { return kIOReturnUnsupported; }
+#if __IO80211_TARGET >= __MAC_15_0
+    virtual IOReturn setROAM_PROFILE(apple80211_roam_profile_all_bands *) override { return kIOReturnUnsupported; }
+#else
     virtual IOReturn setROAM_PROFILE(apple80211_roam_profile_band_data *) override { return kIOReturnUnsupported; }
+#endif
     virtual IOReturn setAWDL_ENABLE_ROAMING(void *) override { return kIOReturnUnsupported; }
     virtual IOReturn setDBG_GUARD_TIME_PARAMS(apple80211_dbg_guard_time_params *) override { return kIOReturnUnsupported; }
     virtual IOReturn setLEAKY_AP_STATS_MODE(apple80211_leaky_ap_setting *) override { return kIOReturnUnsupported; }
@@ -264,7 +272,11 @@ public:
     virtual IOReturn setSENSING_DISABLE(apple80211_sensing_disable_t *) override { return kIOReturnUnsupported; }
     virtual IOReturn setNANPHS_ASSOCIATION(apple80211_nan_link_association_info *) override { return kIOReturnUnsupported; }
     virtual IOReturn setNANPHS_TERMINATED(apple80211_nan_link_association_info *) override { return kIOReturnUnsupported; }
+#if __IO80211_TARGET < __MAC_15_0
+    // Sequoia 15: Apple removed set6G_MODE from InfraProtocol PV slot map; the
+    // override is invalid (parent has no member to override).
     virtual IOReturn set6G_MODE(apple80211_6G_mode *) override { return kIOReturnUnsupported; }
+#endif
     virtual IOReturn setWCL_LEAVE_NETWORK(apple80211_leave_network *) override { return kIOReturnUnsupported; }
     virtual IOReturn setWCL_REASSOC(apple80211_reassoc *) override { return kIOReturnUnsupported; }
     virtual IOReturn setWCL_SET_ROAM_LOCK(apple80211_set_roam_lock *) override { return kIOReturnUnsupported; }
@@ -278,7 +290,11 @@ public:
     virtual IOReturn setWCL_JOIN_ABORT(void *) override { return kIOReturnUnsupported; }
     virtual IOReturn setWCL_TRIGGER_CC(triggerCC *) override { return kIOReturnUnsupported; }
     virtual IOReturn setWCL_SCAN_REQ(apple80211ScanRequest *) override { return kIOReturnUnsupported; }
+#if __IO80211_TARGET >= __MAC_15_0
+    virtual IOReturn setWCL_ASSOCIATE(apple80211AssocCandidates *) override { return kIOReturnUnsupported; }
+#else
     virtual IOReturn setWCL_ASSOCIATE(apple80211_assoc_candidates *) override { return kIOReturnUnsupported; }
+#endif
     virtual IOReturn setWCL_PROTECT_IP(apple80211_wcl_protect_ip_mode *) override { return kIOReturnUnsupported; }
     virtual IOReturn setWCL_LINK_UP_DONE(void *) override { return kIOReturnUnsupported; }
     virtual IOReturn setWCL_SET_SCAN_HOME_AWAY_TIME(scanHomeAndAwayTime *) override { return kIOReturnUnsupported; }
