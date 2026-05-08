@@ -379,8 +379,14 @@ public:
     virtual IOReturn setPOWER(IO80211SkywalkInterface *,apple80211_power_data *) = 0;                // 415 [PV]
     virtual IOReturn getCOUNTRY_CODE(IO80211SkywalkInterface *,apple80211_country_code_data *) = 0;  // 416 [PV]
     virtual IOReturn setCOUNTRY_CODE(IO80211SkywalkInterface *,apple80211_country_code_data *) = 0;  // 417 [PV]
+    // Phase 3.8b: parent IO80211Controller in 15.7.5 has ___cxa_pure_virtual at
+    // byte 0xd08. AppleBCMWLANCore concrete-overrides with setGET_DEBUG_INFO.
+    // Without this padding, every subsequent declaration drifts -1 slot vs
+    // Apple's parent layout (disableVirtualInterface ends up at byte 0xd20),
+    // and kxld silently rejects the kext at boot.
+    virtual IOReturn setGET_DEBUG_INFO(IO80211SkywalkInterface *, void *) { return kIOReturnUnsupported; }  // byte 0xd08
 
-    virtual IOReturn getPLATFORM_CONFIG(IO80211SkywalkInterface *, apple80211_platform_config *);    // 418 [NEW concrete]
+    virtual IOReturn getPLATFORM_CONFIG(IO80211SkywalkInterface *, apple80211_platform_config *);    // byte 0xd10
     virtual SInt32 enableVirtualInterface(IO80211VirtualInterface *);                                // 419
     virtual SInt32 disableVirtualInterface(IO80211VirtualInterface *);                               // 420
     virtual bool requiresExplicitMBufRelease();                                                       // 421
