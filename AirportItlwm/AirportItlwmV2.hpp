@@ -261,12 +261,13 @@ public:
     // overload IO80211Controller::postMessage(IO80211SkywalkInterface*, uint,
     // void*, ulong, bool) which is a non-virtual member function we don't need
     // to override either — Apple's framework calls it directly.
-#else
+#endif
+    // handleCardSpecific lives at byte 0xca8 in both Sonoma 14 and Sequoia 15
+    // (PV in IO80211ControllerV2.h on both paths). One unconditional override.
     virtual SInt32 handleCardSpecific(IO80211SkywalkInterface *,unsigned long,void *,bool) override {
         XYLog("%s\n", __FUNCTION__);
         return 0;
     };
-#endif
     virtual IOReturn getDRIVER_VERSION(IO80211SkywalkInterface *interface,apple80211_version_data *data) override {
 #if __IO80211_TARGET >= __MAC_15_0
         // Defense-in-depth: vtable misalignment 让 Apple framework 可能 call 这个
